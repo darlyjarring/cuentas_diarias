@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Gestión de Clientes y Reportes</title>
+    <title>Gestión de Clientes y Reportes Detallados</title>
     <!-- Librerías de Firebase (Clásico V8) -->
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
@@ -19,23 +19,34 @@
         .input-group input { flex-grow: 1; }
         button { padding: 10px 15px; background-color: #3498db; color: white; border: none; border-radius: 6px; cursor: pointer; transition: background-color 0.3s; }
         button:hover { background-color: #2980b9; }
-        .btn-red { background-color: #e74c3c; }
-        .btn-red:hover { background-color: #c0392b; }
         .btn-green { background-color: #2ecc71; }
         .btn-green:hover { background-color: #27ae60; }
         .resultado { padding: 15px; border-radius: 6px; margin-top: 15px; text-align: center; font-weight: bold; }
 
         /* Reportes */
         #reportesCliente { margin-top: 30px; }
-        .resumen-global { display: flex; justify-content: space-around; background-color: #ecf0f1; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 1.1em; }
-        .loan-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 8px; background-color: #f9f9f9; }
+        .resumen-global-final { 
+            border: 2px solid #2c3e50; 
+            padding: 20px; 
+            margin-top: 30px; 
+            border-radius: 8px;
+            background-color: #eaf2f8;
+        }
+        .resumen-global-final h3 { color: #2c3e50; margin-top: 0; }
+        .loan-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 25px; border-radius: 8px; background-color: #f9f9f9; }
         .loan-card h4 { margin-top: 0; color: #3498db; }
-        .loan-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.9em; }
+        .loan-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.9em; margin-bottom: 15px;}
         .stat-item { padding: 5px 0; border-bottom: 1px dashed #eee; }
         .stat-item strong { color: #2c3e50; }
         .status-badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; display: inline-block; margin-left: 10px; }
         .status-Activo { background-color: #f1c40f; color: #333; }
         .status-Saldado { background-color: #2ecc71; color: white; }
+
+        /* Detalle de Pagos */
+        .detalle-pagos { margin-top: 15px; background-color: #fff; padding: 10px; border-radius: 6px; border: 1px solid #eee; }
+        .pago-item { padding: 3px 0; border-bottom: 1px dotted #ccc; font-size: 0.85em; }
+        .pago-item:last-child { border-bottom: none; }
+        .pago-item strong { margin-right: 10px; color: #555; }
     </style>
 </head>
 <body>
@@ -47,7 +58,7 @@
     <div class="section-header">1. Búsqueda y Modificación de Clientes</div>
     <div class="input-group">
         <input type="text" id="inputClienteId" placeholder="Ingrese ID (Cédula) del Cliente" />
-        <button onclick="cargarClienteParaEdicion()">Buscar Cliente</button>
+        <button onclick="cargarClienteParaEdicion()">Buscar Cliente y Generar Reporte</button>
     </div>
     
     <div id="formEdicionCliente" style="display:none; border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
@@ -61,16 +72,19 @@
     </div>
 
     <!-- Sección de Reportes -->
-    <div class="section-header">2. Reportes Financieros del Cliente</div>
+    <div class="section-header">2. Reportes Financieros Detallados</div>
     <div id="reportesCliente" style="display:none;">
-        <div class="resumen-global">
-            <div>Total Préstamos: <strong id="totalPrestamos">0</strong></div>
-            <div>Total Pagado Global: <strong id="totalPagadoGlobal">$0.00</strong></div>
-            <div>Total Saldo Pendiente: <strong id="totalSaldoPendienteGlobal">$0.00</strong></div>
-        </div>
+        <h3 style="color: #007bff; margin-top: 0;">=== DETALLE POR PRÉSTAMO ===</h3>
         
         <div id="listadoPrestamos">
-            <!-- Las tarjetas de préstamos se insertarán aquí -->
+            <!-- Las tarjetas de préstamos y el detalle de pagos se insertarán aquí -->
+        </div>
+
+        <div class="resumen-global-final">
+            <h3>=== RESUMEN CONSOLIDADO DEL CLIENTE ===</h3>
+            <div>- Monto Total Pagado (Histórico): <strong id="totalPagadoGlobal" style="color: #2ecc71;">$0.00</strong></div>
+            <div>- Saldo Total Adeudado (Pendiente): <strong id="totalSaldoPendienteGlobal" style="color: #e74c3c;">$0.00</strong></div>
+            <p style="margin-top: 15px; font-size: 0.9em; color: #7f8c8d;">(El Saldo Total Adeudado incluye Capital Pendiente + Interés Acumulado)</p>
         </div>
     </div>
     
@@ -92,6 +106,18 @@
             resultadoDiv.textContent = '';
             resultadoDiv.style.backgroundColor = 'transparent';
         }, 6000);
+    }
+
+    // Función de utilidad para formatear fechas de Timestamp
+    function formatDate(timestamp) {
+        if (!timestamp) return 'N/A';
+        // Los timestamps de Firebase v8 son objetos con 'seconds'
+        const date = new Date(timestamp.seconds * 1000); 
+        return date.toLocaleDateString('es-ES', { 
+            year: 'numeric', 
+            month: '2-digit', 
+            day: '2-digit' 
+        });
     }
 
     // =======================================================
@@ -161,11 +187,13 @@
 
                     // c) Actualizar todos los préstamos asociados al ID viejo
                     const prestamosQuery = prestamosRef.where('idCliente', '==', cedulaOriginal);
-                    const prestamosSnapshot = await transaction.get(prestamosQuery);
-
-                    prestamosSnapshot.forEach(doc => {
+                    const prestamosSnapshot = await prestamosQuery.get(); // Usar get() sin transaction
+                    
+                    // Nota: Firestore v8 requiere que las queries sin `orderBy` se ejecuten con get() fuera de la transacción
+                    // y luego se usen las referencias para actualizar dentro de la transacción.
+                    for (const doc of prestamosSnapshot.docs) {
                         transaction.update(doc.ref, { idCliente: cedulaNueva });
-                    });
+                    }
                     
                     // d) Eliminar el documento original
                     transaction.delete(clienteDocRefOriginal);
@@ -184,19 +212,47 @@
     }
 
     // =======================================================
-    // 2. LÓGICA DE REPORTES
+    // 2. LÓGICA DE REPORTES DETALLADOS
     // =======================================================
 
-    async function obtenerResumenPagos(idPrestamo) {
-        const pagosSnapshot = await pagosRef.where('idPrestamo', '==', idPrestamo).get();
+    async function obtenerDetallePagos(idPrestamo) {
+        // Obtenemos los pagos y los ordenamos por fecha (aunque la lógica de Firestore es asincrónica,
+        // confiaremos en que el Timestamp 'fecha' en la colección 'pagos' nos dé un orden aproximado)
+        const pagosQuery = pagosRef.where('idPrestamo', '==', idPrestamo);
+        const pagosSnapshot = await pagosQuery.get();
+        
         let totalPagado = 0;
-        let cuotasAbonadas = pagosSnapshot.docs.length;
+        let detallePagosHTML = '';
+        const pagos = [];
         
         pagosSnapshot.forEach(doc => {
-            totalPagado += doc.data().monto || 0;
+            const data = doc.data();
+            pagos.push({
+                fecha: data.fecha,
+                monto: data.monto || 0
+            });
+            totalPagado += data.monto || 0;
         });
 
-        return { totalPagado: totalPagado, cuotasAbonadas: cuotasAbonadas };
+        // Ordenar los pagos en memoria por fecha (ascendente) para el reporte
+        pagos.sort((a, b) => a.fecha.seconds - b.fecha.seconds);
+        
+        // Generar el HTML de detalle
+        detallePagosHTML += '<div class="detalle-pagos">Detalle de Pagos:';
+        if (pagos.length === 0) {
+            detallePagosHTML += '<p style="margin: 0; padding: 5px; font-style: italic;">No hay pagos registrados para este préstamo.</p>';
+        } else {
+            pagos.forEach(pago => {
+                detallePagosHTML += `
+                    <div class="pago-item">
+                        <strong>- ${formatDate(pago.fecha)}:</strong> $${pago.monto.toFixed(2)}
+                    </div>
+                `;
+            });
+        }
+        detallePagosHTML += '</div>';
+
+        return { totalPagado: totalPagado, detalleHTML: detallePagosHTML };
     }
 
     async function cargarReportes(idCliente) {
@@ -205,56 +261,60 @@
 
         let totalPagadoGlobal = 0;
         let totalSaldoPendienteGlobal = 0;
-        let totalPrestamos = 0;
 
         try {
             const prestamosSnapshot = await prestamosRef.where('idCliente', '==', idCliente).get();
             const listadoPrestamosDiv = document.getElementById('listadoPrestamos');
             listadoPrestamosDiv.innerHTML = ''; // Limpiar
 
-            totalPrestamos = prestamosSnapshot.docs.length;
-            
-            if (totalPrestamos === 0) {
+            if (prestamosSnapshot.docs.length === 0) {
                 listadoPrestamosDiv.innerHTML = '<p style="text-align: center; color: #7f8c8d;">Este cliente no tiene préstamos activos o registrados.</p>';
             }
+
+            let prestamoIndex = 1;
 
             for (const doc of prestamosSnapshot.docs) {
                 const prestamo = doc.data();
                 const idPrestamo = doc.id;
 
-                const resumenPagos = await obtenerResumenPagos(idPrestamo);
-                const saldoTotalPendiente = (prestamo.saldoPendiente || 0) + (prestamo.interesAcumulado || 0);
+                // 1. Obtener el detalle de pagos y el total pagado
+                const { totalPagado, detalleHTML } = await obtenerDetallePagos(idPrestamo);
+                
+                // 2. Calcular el saldo total (Capital + Interés)
+                const saldoCapitalPendiente = prestamo.saldoPendiente || 0;
+                const interesAcumulado = prestamo.interesAcumulado || 0;
+                const saldoTotalPendiente = saldoCapitalPendiente + interesAcumulado;
 
-                totalPagadoGlobal += resumenPagos.totalPagado;
+                totalPagadoGlobal += totalPagado;
                 totalSaldoPendienteGlobal += saldoTotalPendiente;
                 
                 const cardHTML = `
                     <div class="loan-card">
-                        <h4>Préstamo ID: ${idPrestamo}
+                        <h4>--- Préstamo: ${prestamoIndex} (ID: ${idPrestamo})
                             <span class="status-badge status-${prestamo.estado}">${prestamo.estado.toUpperCase()}</span>
                         </h4>
                         <div class="loan-stats">
+                            <div class="stat-item"><strong>Fecha Préstamo:</strong> ${formatDate(prestamo.fechaPrestamo)}</div>
                             <div class="stat-item"><strong>Capital Inicial:</strong> $${(prestamo.capitalInicial || 0).toFixed(2)}</div>
-                            <div class="stat-item"><strong>Pago Diario Req:</strong> $${(prestamo.pagoDiarioRequerido || 0).toFixed(2)}</div>
-                            
-                            <div class="stat-item"><strong>Saldo Capital Pendiente:</strong> <span style="color: #e74c3c; font-weight: bold;">$${(prestamo.saldoPendiente || 0).toFixed(2)}</span></div>
-                            <div class="stat-item"><strong>Interés Acumulado:</strong> <span style="color: #c0392b; font-weight: bold;">$${(prestamo.interesAcumulado || 0).toFixed(2)}</span></div>
-                            <div class="stat-item" style="grid-column: 1 / span 2;">
-                                <strong>SALDO TOTAL PENDIENTE:</strong> <span style="color: #e74c3c; font-size: 1.1em; font-weight: bold;">$${saldoTotalPendiente.toFixed(2)}</span>
+                            <div class="stat-item" style="grid-column: 1 / span 2; font-size: 1.1em;">
+                                <strong>Total Pagado en este PRÉSTAMO:</strong> 
+                                <span style="color: #2ecc71;">$${totalPagado.toFixed(2)}</span>
                             </div>
-                            
-                            <div class="stat-item"><strong>Total Pagado (Cuotas):</strong> <span style="color: #2ecc71; font-weight: bold;">$${resumenPagos.totalPagado.toFixed(2)}</span></div>
-                            <div class="stat-item"><strong>Cuotas Abonadas:</strong> <span style="color: #27ae60; font-weight: bold;">${resumenPagos.cuotasAbonadas}</span></div>
-                            <div class="stat-item"><strong>Fecha Préstamo:</strong> ${prestamo.fechaPrestamo ? new Date(prestamo.fechaPrestamo.seconds * 1000).toLocaleDateString() : 'N/A'}</div>
-                            <div class="stat-item"><strong>Último Pago:</strong> ${prestamo.fechaUltimoPago ? new Date(prestamo.fechaUltimoPago.seconds * 1000).toLocaleDateString() : 'N/A'}</div>
+                            <div class="stat-item" style="grid-column: 1 / span 2; font-size: 1.1em;">
+                                <strong>Saldo Pendiente Total:</strong> 
+                                <span style="color: #e74c3c;">$${saldoTotalPendiente.toFixed(2)}</span>
+                                <span style="font-size: 0.8em; color: #7f8c8d;">(Capital: $${saldoCapitalPendiente.toFixed(2)}, Interés: $${interesAcumulado.toFixed(2)})</span>
+                            </div>
                         </div>
+                        
+                        ${detalleHTML}
                     </div>
                 `;
                 listadoPrestamosDiv.insertAdjacentHTML('beforeend', cardHTML);
+                prestamoIndex++;
             }
 
-            // Actualizar resumen global
-            document.getElementById('totalPrestamos').textContent = totalPrestamos;
+            // 3. Actualizar resumen consolidado al final
             document.getElementById('totalPagadoGlobal').textContent = `$${totalPagadoGlobal.toFixed(2)}`;
             document.getElementById('totalSaldoPendienteGlobal').textContent = `$${totalSaldoPendienteGlobal.toFixed(2)}`;
 
