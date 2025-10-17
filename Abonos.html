@@ -37,23 +37,26 @@
         
         let app, db, auth;
         
-        // --- Configuración e Inicialización de Firebase con Manejo de Errores ---
-        let firebaseConfig = {};
+        // --- Configuración de Firebase del Usuario (Hardcodeada para garantizar conexión) ---
+        const USER_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyCuGggEvH6leC6-tWBpN-5BXC37U-NsFqU",
+            authDomain: "finanzas-excel30.firebaseapp.com",
+            projectId: "finanzas-excel30",
+            storageBucket: "finanzas-excel30.firebasestorage.app",
+            messagingSenderId: "508931220293",
+            appId: "1:508931220293:web:d64cf5125c37d5bae3142c",
+            measurementId: "G-2YZ3YREX0P"
+        };
+        
         try {
-            // 1. Intentar parsear la configuración global
-            firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-            
-            if (Object.keys(firebaseConfig).length === 0) {
-                 console.error("Firebase Initialization Error: __firebase_config is empty or not provided.");
-                 // NO inicializamos si está vacío, para evitar el error "projectId not provided"
-            } else {
-                // 2. Inicializar App y Servicios
-                app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-            }
+            // 1. Inicializar App con la configuración incrustada
+            app = initializeApp(USER_FIREBASE_CONFIG);
+            // 2. Inicializar Firestore y Auth con el método V9
+            db = getFirestore(app);
+            auth = getAuth(app);
+            console.log("Firebase App y Firestore V9 inicializados correctamente.");
         } catch (e) {
-            console.error("FATAL ERROR: Failed to parse Firebase config JSON.", e);
+            console.error("ERROR FATAL: Fallo al inicializar Firebase con la configuración proporcionada.", e);
         }
 
         // --- EXPOSICIÓN DE GLOBALES (Solo si se inicializó correctamente) ---
@@ -76,10 +79,11 @@
         // Iniciar autenticación
         async function initializeAuth() {
             if (!auth) {
-                console.warn("Auth no inicializado. La configuración de Firebase está ausente.");
+                console.warn("Auth no inicializado. No se puede autenticar.");
                 return;
             }
             try {
+                // Usamos la variable global proporcionada por el entorno para el token
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
@@ -195,7 +199,7 @@
     async function buscarPrestamo() {
         // Validación de conexión
         if (typeof window.db === 'undefined' || window.db === null) {
-            mostrarMensaje('¡ERROR DE CONEXIÓN! La base de datos no está inicializada. Recargue el canvas.', 'error');
+            mostrarMensaje('¡ERROR DE CONEXIÓN! La base de datos no está inicializada. Recargue o revise su configuración.', 'error');
             return;
         }
         
@@ -237,8 +241,9 @@
                 prestamoDocRef = null;
             }
         } catch (error) {
+            // Si el error persiste, lo reportamos de forma detallada
             console.error("Error al buscar préstamo:", error);
-            mostrarMensaje(`Error crítico al cargar: ${error.message || 'Verifique la conexión y el ID.'}`, 'error');
+            mostrarMensaje(`Error al cargar: ${error.message || 'Verifique la conexión y el ID.'}`, 'error');
         }
     }
 
@@ -351,6 +356,7 @@
                 // --- REGISTRAR PAGO (colección 'pagos') ---
                 const pagosCollectionRef = window.collection(window.db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PAGOS);
                 
+                // Agregamos el documento de pago fuera de la transacción (V9 no permite addDoc dentro)
                 await window.addDoc(pagosCollectionRef, {
                     idPrestamo: prestamoDoc.id,
                     idCliente: data.idCliente,
