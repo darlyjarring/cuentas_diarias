@@ -4,13 +4,23 @@
     <title>Registro de Pago Diario - Firebase</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
     <script src="firebase-config.js"></script>
     <style>
-        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
-        .form-grid, .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
-        .data-box { padding: 10px; border: 1px solid #ddd; background-color: #f9f9f9; margin-top: 15px; }
-        .resultado { padding: 10px; border-radius: 4px; margin-top: 15px; text-align: center; }
-        /* Añade más estilos si los tenías */
+        body { font-family: sans-serif; background-color: #f4f7f6; color: #333; }
+        .container { max-width: 650px; margin: 40px auto; padding: 30px; border: 1px solid #e0e0e0; border-radius: 12px; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05); }
+        h2 { color: #2c3e50; margin-bottom: 25px; text-align: center; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; color: #555; }
+        input[type="text"], input[type="number"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+        .data-box { padding: 15px; border: 1px solid #ddd; background-color: #ecf0f1; border-radius: 8px; margin-top: 20px; }
+        .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .resultado { padding: 15px; border-radius: 6px; margin-top: 20px; text-align: center; font-weight: bold; }
+        button { padding: 12px; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; transition: background-color 0.3s; color: white; }
+        .btn-primary { background-color: #2ecc71; }
+        .btn-primary:hover { background-color: #27ae60; }
+        .btn-danger { background-color: #e74c3c; }
+        .btn-danger:hover { background-color: #c0392b; }
     </style>
 </head>
 <body>
@@ -40,15 +50,15 @@
             <div><strong>Pago Diario Req.:</strong> <span id="pagoDiarioReq"></span></div>
             
             <div><strong>Saldo Pendiente:</strong> <span id="saldoPendiente" style="font-weight: bold; color: #e74c3c;"></span></div>
-            <div><strong>Días Atraso:</strong> <span id="diasAtraso" style="font-weight: bold; color: #f39c12;"></span></div>
-
+            <div><strong>Interés Mensual:</strong> <span id="interesMensualTasa" style="font-weight: bold; color: #007bff;"></span></div>
+            
             <div style="grid-column: 1 / span 2;"><strong>Interés Acumulado:</strong> <span id="interesAcumulado" style="font-weight: bold; color: #2980b9;"></span></div>
         </div>
     </div>
 
     <div style="display:flex; gap: 10px;">
-        <button onclick="enviarPago()" class="btn-primary" style="flex: 3; background-color: #2ecc71;">Registrar Pago</button>
-        <button onclick="limpiarFormularioPagos()" class="btn-danger" style="flex: 1;">Limpiar Formulario</button>
+        <button onclick="enviarPago()" class="btn-primary" style="flex: 3;">Registrar Pago</button>
+        <button onclick="limpiarFormularioPagos()" class="btn-danger" style="flex: 1;">Limpiar</button>
     </div>
     
     <div id="resultado" class="resultado"></div>
@@ -57,11 +67,15 @@
 <script>
     let idPrestamoActual = null; 
     
-    // Asumiendo que tienes una colección 'clientes' y 'prestamos'
-    const prestamosRef = db.collection('prestamos');
-    const pagosRef = db.collection('pagos');
-    const clientesRef = db.collection('clientes');
+    // Se intenta obtener las referencias; se comprueba su existencia dentro de las funciones.
+    const prestamosRef = typeof db !== 'undefined' ? db.collection('prestamos') : null;
+    const pagosRef = typeof db !== 'undefined' ? db.collection('pagos') : null;
+    const clientesRef = typeof db !== 'undefined' ? db.collection('clientes') : null;
 
+    if (!prestamosRef) {
+        console.error("La base de datos 'db' no está definida. Verifique firebase-config.js.");
+    }
+    
     function limpiarFormularioPagos() {
         document.getElementById('idPrestamo').value = '';
         document.getElementById('montoPagado').value = '';
@@ -69,6 +83,7 @@
         document.getElementById('resultado').textContent = '';
         document.getElementById('nombreClientePago').textContent = 'Cargando...';
         document.getElementById('cedulaClientePago').textContent = 'N/A'; 
+        document.getElementById('interesAcumulado').textContent = '';
         idPrestamoActual = null; 
     }
 
@@ -82,8 +97,8 @@
         idPrestamoActual = null;
     }
 
-    // --- BÚSQUEDA DE CLIENTE (Asíncrona) ---
     async function cargarNombreCliente(idCliente) {
+        if (!clientesRef) return;
         try {
             const doc = await clientesRef.doc(idCliente).get();
             if (doc.exists) {
@@ -100,13 +115,99 @@
         }
     }
         
-    // --- CARGA DE PRÉSTAMO (Asíncrona) ---
+    // =======================================================
+    // FUNCIÓN CENTRAL DE LÓGICA FINANCIERA (INTERÉS)
+    // =======================================================
+    
+    /**
+     * Calcula y aplica el interés acumulado si ha pasado uno o más meses completos.
+     * El cálculo se basa en el 20% del Capital Inicial por mes completo transcurrido.
+     */
+    async function actualizarIntereses(idPrestamo) {
+        if (!prestamosRef || typeof db === 'undefined') {
+            throw new Error('Error de inicialización de Firebase.');
+        }
+
+        let datosActualizados = null;
+        
+        try {
+            await db.runTransaction(async (transaction) => {
+                const prestamoDocRef = prestamosRef.doc(idPrestamo);
+                const prestamoDoc = await transaction.get(prestamoDocRef);
+
+                if (!prestamoDoc.exists) {
+                    throw new Error("Préstamo no encontrado.");
+                }
+
+                const data = prestamoDoc.data();
+                if (data.estado === 'Saldado') {
+                    datosActualizados = data; // No hacer nada si está saldado
+                    return;
+                }
+                
+                // Convertir Timestamp a Date
+                const fechaCalculo = data.fechaUltimoCalculoInteres.toDate();
+                const capitalInicial = data.capitalInicial;
+                const interesTasa = data.interesTasaMensual; // 0.20
+                
+                const hoy = new Date();
+                
+                // 1. CALCULAR MESES COMPLETOS TRANSCURRIDOS
+                let mesesTranscurridos = (hoy.getFullYear() - fechaCalculo.getFullYear()) * 12;
+                mesesTranscurridos -= fechaCalculo.getMonth();
+                mesesTranscurridos += hoy.getMonth();
+                
+                // Ajuste: si el día de hoy es menor que el día de inicio del cálculo,
+                // aún no se ha cumplido el mes completo.
+                if (hoy.getDate() < fechaCalculo.getDate()) {
+                    mesesTranscurridos--;
+                }
+                
+                // Aseguramos que solo sea 0 o positivo
+                mesesTranscurridos = Math.max(0, mesesTranscurridos);
+                
+                if (mesesTranscurridos > 0) {
+                    const interesPorMes = capitalInicial * interesTasa;
+                    const interesTotalAñadir = interesPorMes * mesesTranscurridos;
+                    
+                    const nuevoInteresAcumulado = data.interesAcumulado + interesTotalAñadir;
+                    
+                    // 2. Determinar la NUEVA FECHA de último cálculo (Avanza la fecha el número de meses aplicados)
+                    const nuevaFechaCalculo = new Date(fechaCalculo);
+                    nuevaFechaCalculo.setMonth(nuevaFechaCalculo.getMonth() + mesesTranscurridos);
+                    
+                    // 3. ACTUALIZAR EL PRÉSTAMO EN LA TRANSACCIÓN
+                    transaction.update(prestamoDocRef, {
+                        interesAcumulado: parseFloat(nuevoInteresAcumulado.toFixed(2)),
+                        fechaUltimoCalculoInteres: firebase.firestore.Timestamp.fromDate(nuevaFechaCalculo)
+                    });
+                    
+                    // 4. RETORNAR LOS DATOS ACTUALIZADOS
+                    datosActualizados = {
+                        ...data,
+                        interesAcumulado: parseFloat(nuevoInteresAcumulado.toFixed(2)),
+                        fechaUltimoCalculoInteres: nuevaFechaCalculo 
+                    };
+                    console.log(`Interés aplicado: ${mesesTranscurridos} mes(es) por $${interesTotalAñadir.toFixed(2)}.`);
+                } else {
+                    datosActualizados = data; // No hubo cambios
+                }
+            });
+            return datosActualizados;
+
+        } catch (e) {
+            console.error("Error en la transacción de Intereses:", e);
+            throw new Error(`Error al actualizar intereses: ${e.message}`);
+        }
+    }
+
+    // --- CARGA DE PRÉSTAMO (ASÍNC.) ---
     async function cargarPrestamo() {
         const idPrestamo = document.getElementById('idPrestamo').value.toUpperCase().trim(); 
         document.getElementById('datosPrestamo').style.display = 'none';
         const resultadoDiv = document.getElementById('resultado');
-        resultadoDiv.textContent = 'Buscando préstamo...';
-        resultadoDiv.style.backgroundColor = '#ecf0f1';
+        resultadoDiv.textContent = 'Buscando y actualizando préstamo...';
+        resultadoDiv.style.backgroundColor = '#fff3cd';
 
         if (!idPrestamo) {
             limpiarFormularioPagos(); 
@@ -114,33 +215,32 @@
         }
 
         try {
-            const doc = await prestamosRef.doc(idPrestamo).get();
-            if (doc.exists) {
-                const prestamo = doc.data();
-                
-                // Conversión de formato (Firebase usa números, no necesitas conversiones complejas)
+            // 1. EJECUTAR LA LÓGICA DE INTERÉS ANTES DE CARGAR LOS DATOS
+            const prestamo = await actualizarIntereses(idPrestamo);
+
+            if (prestamo) {
+                // 2. MOSTRAR DATOS ACTUALIZADOS
                 document.getElementById('capital').textContent = `$${(prestamo.capitalInicial || 0).toFixed(2)}`;
                 document.getElementById('pagoDiarioReq').textContent = `$${(prestamo.pagoDiarioRequerido || 0).toFixed(2)}`;
-                document.getElementById('saldoPendiente').textContent = `$${(prestamo.saldoPendiente || 0).toFixed(2)}`;
-                document.getElementById('diasAtraso').textContent = prestamo.diasAtrasoAcumulado || 0;
+                // Saldo pendiente incluye solo el principal
+                document.getElementById('saldoPendiente').textContent = `$${(prestamo.saldoPendiente || 0).toFixed(2)}`; 
+                document.getElementById('interesMensualTasa').textContent = `${(prestamo.interesTasaMensual * 100).toFixed(1)}%`;
+                // Se muestra el interés acumulado
                 document.getElementById('interesAcumulado').textContent = `$${(prestamo.interesAcumulado || 0).toFixed(2)}`; 
                 
                 document.getElementById('datosPrestamo').style.display = 'block';
-                resultadoDiv.textContent = 'Préstamo cargado.';
+                resultadoDiv.textContent = 'Préstamo cargado (Intereses actualizados si aplicaba).';
                 resultadoDiv.style.backgroundColor = '#d9ead3';
                 
                 cargarNombreCliente(prestamo.idCliente); 
             } else {
-                document.getElementById('datosPrestamo').style.display = 'none';
-                resultadoDiv.textContent = 'Error: Préstamo no encontrado.';
-                resultadoDiv.style.backgroundColor = '#f4cccc';
-                document.getElementById('nombreClientePago').textContent = 'Cargando...'; 
+                // La función actualizarIntereses lanza un error si no lo encuentra.
             }
         } catch (e) {
-            console.error("Error al cargar préstamo:", e);
-            mostrarError("Fallo al conectar con la base de datos.");
+            mostrarError(e.message);
         }
     }
+
 
     // --- FUNCIÓN DE PAGO (Asíncrona y Transaccional) ---
     async function enviarPago() {
@@ -164,67 +264,68 @@
         document.getElementById('datosPrestamo').style.display = 'none';
 
         try {
-            // Usamos una transacción para garantizar que la lectura y escritura sean atómicas
+            // 1. ASEGURAR QUE LOS INTERESES ESTÉN AL DÍA ANTES DE PROCESAR EL PAGO
+            await actualizarIntereses(idPrestamo);
+            
+            // Variables para el resumen final
+            let nuevoSaldo = 0; 
+            let pagoAlCapital = 0;
+            let pagoAlInteres = 0;
+
+            // 2. PROCESAR EL PAGO USANDO UNA TRANSACCIÓN
             await db.runTransaction(async (transaction) => {
-                const prestamoDoc = await transaction.get(prestamosRef.doc(idPrestamo));
-
-                if (!prestamoDoc.exists) {
-                    throw new Error("Préstamo no encontrado en la base de datos.");
-                }
-
+                const prestamoDocRef = prestamosRef.doc(idPrestamo);
+                const prestamoDoc = await transaction.get(prestamoDocRef);
+                
                 const data = prestamoDoc.data();
                 let saldoPendiente = data.saldoPendiente || 0;
                 let interesAcumulado = data.interesAcumulado || 0;
-                let diasAtrasoAcumulado = data.diasAtrasoAcumulado || 0;
-                let estado = data.estado || 'Activo';
 
-                if (saldoPendiente <= 0) {
+                if (saldoPendiente <= 0 && interesAcumulado <= 0) {
                     throw new Error("Este préstamo ya ha sido liquidado.");
                 }
 
-                // SIMPLIFICACIÓN DE LÓGICA DE NEGOCIO (Aquí iría tu lógica híbrida):
-                
-                // 1. Aplicación simple (debes expandir esto con tu lógica completa)
-                let pagoAlInteres = Math.min(montoPagado, interesAcumulado);
+                // Se aplica el pago priorizando el INTERÉS acumulado.
+                pagoAlInteres = Math.min(montoPagado, interesAcumulado);
                 let restante = montoPagado - pagoAlInteres;
-                let pagoAlCapital = restante; 
+                pagoAlCapital = restante; 
                 
-                let nuevoSaldo = saldoPendiente - pagoAlInteres - pagoAlCapital;
+                nuevoSaldo = saldoPendiente - pagoAlCapital;
                 let nuevoInteresAcumulado = interesAcumulado - pagoAlInteres;
 
                 if (nuevoSaldo < 0) nuevoSaldo = 0;
-                if (nuevoInteresAcumulado < 0.005) nuevoInteresAcumulado = 0;
+                if (nuevoInteresAcumulado < 0.005) nuevoInteresAcumulado = 0; // Evitar flotantes negativos muy pequeños
 
-                estado = (nuevoSaldo === 0) ? 'Saldado' : 'Activo';
+                const estado = (nuevoSaldo === 0 && nuevoInteresAcumulado === 0) ? 'Saldado' : 'Activo';
                 
-                // 2. Registro del pago en la colección 'pagos'
+                // A. Registro del pago en la colección 'pagos'
                 pagosRef.add({
                     idPrestamo: idPrestamo,
                     monto: montoPagado,
                     fecha: firebase.firestore.FieldValue.serverTimestamp(),
-                    aplicadoInteres: pagoAlInteres,
-                    aplicadoCapital: pagoAlCapital
+                    aplicadoInteres: parseFloat(pagoAlInteres.toFixed(2)),
+                    aplicadoCapital: parseFloat(pagoAlCapital.toFixed(2)),
+                    saldoDespuesPago: parseFloat(nuevoSaldo.toFixed(2))
                 });
                 
-                // 3. Actualización del préstamo
-                transaction.update(prestamosRef.doc(idPrestamo), {
-                    saldoPendiente: nuevoSaldo,
-                    interesAcumulado: nuevoInteresAcumulado,
+                // B. Actualización del préstamo
+                transaction.update(prestamoDocRef, {
+                    saldoPendiente: parseFloat(nuevoSaldo.toFixed(2)),
+                    interesAcumulado: parseFloat(nuevoInteresAcumulado.toFixed(2)),
                     estado: estado,
                     fechaUltimoPago: firebase.firestore.FieldValue.serverTimestamp(),
-                    // NOTA: La actualización de diasAtrasoAcumulado requiere lógica de fechas que
-                    // se calcula mejor en una Cloud Function si la lógica es muy compleja.
                 });
-
-                return {
-                    mensaje: `Pago registrado. Nuevo Saldo Pendiente: $${nuevoSaldo.toFixed(2)}.`,
-                    id: idPrestamo 
-                };
             });
 
-            // Si la transacción fue exitosa
-            resultadoDiv.textContent = `✅ REGISTRO GENERADO. Nuevo Saldo Pendiente: $${nuevoSaldo.toFixed(2)} (ID: ${idPrestamoActual})`;
+            // 3. MOSTRAR ÉXITO
+            const mensajeFinal = `Pago registrado. Capital: $${pagoAlCapital.toFixed(2)}, Interés: $${pagoAlInteres.toFixed(2)}. Nuevo Saldo: $${nuevoSaldo.toFixed(2)}`;
+            resultadoDiv.textContent = `✅ REGISTRO GENERADO. ${mensajeFinal} (ID: ${idPrestamoActual})`;
             resultadoDiv.style.backgroundColor = '#d9ead3';
+
+            setTimeout(() => {
+                resultadoDiv.textContent = '';
+                resultadoDiv.style.backgroundColor = 'transparent';
+            }, 5000);
             
         } catch (e) {
             console.error("Fallo de transacción:", e);
