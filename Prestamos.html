@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Registro de Préstamo - Firebase</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <script src="firebase-config.js"></script>
+    <style>
+        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+        .resultado { padding: 10px; border-radius: 4px; margin-top: 15px; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Registro de Nuevo Préstamo</h2>
+
+    <div class="form-grid">
+        <div>
+            <label for="idCliente">ID del Cliente (Cédula/DNI):</label>
+            <input type="text" id="idCliente" placeholder="Cédula">
+        </div>
+        <div>
+            <label for="nombreCliente">Nombre Completo:</label>
+            <input type="text" id="nombreCliente" placeholder="Juan Pérez">
+        </div>
+
+        <div>
+            <label for="capitalInicial">Capital Inicial ($):</label>
+            <input type="number" id="capitalInicial" step="0.01" min="0" placeholder="100.00">
+        </div>
+        <div>
+            <label for="pagoDiarioReq">Pago Diario Requerido ($):</label>
+            <input type="number" id="pagoDiarioReq" step="0.01" min="0" placeholder="5.00">
+        </div>
+        
+        <div>
+            <label for="fechaPrestamo">Fecha del Préstamo:</label>
+            <input type="date" id="fechaPrestamo">
+        </div>
+        
+    </div>
+
+    <button onclick="registrarPrestamo()" style="width: 100%; padding: 10px; background-color: #3498db; color: white; border: none; border-radius: 4px;">
+        Registrar Préstamo
+    </button>
+    
+    <div id="resultadoPrestamo" class="resultado"></div>
+</div>
+
+<script>
+    const prestamosRef = db.collection('prestamos');
+    const clientesRef = db.collection('clientes');
+
+    function mostrarResultado(mensaje, esError = false) {
+        const resultadoDiv = document.getElementById('resultadoPrestamo');
+        resultadoDiv.textContent = esError ? '❌ Error: ' + mensaje : '✅ ' + mensaje;
+        resultadoDiv.style.backgroundColor = esError ? '#f4cccc' : '#d9ead3';
+        setTimeout(() => {
+            resultadoDiv.textContent = '';
+            resultadoDiv.style.backgroundColor = 'transparent';
+        }, 5000);
+    }
+
+    function generarIdPrestamo() {
+        // Genera un ID simple y único (ej: PRST + timestamp corto)
+        return 'PRST' + Date.now().toString().slice(-6);
+    }
+
+    async function registrarPrestamo() {
+        const idCliente = document.getElementById('idCliente').value.trim();
+        const nombreCliente = document.getElementById('nombreCliente').value.trim();
+        const capitalInicial = parseFloat(document.getElementById('capitalInicial').value);
+        const pagoDiarioReq = parseFloat(document.getElementById('pagoDiarioReq').value);
+        const fechaPrestamoStr = document.getElementById('fechaPrestamo').value;
+
+        if (!idCliente || !nombreCliente || isNaN(capitalInicial) || isNaN(pagoDiarioReq) || !fechaPrestamoStr) {
+            mostrarResultado('Por favor, complete todos los campos con valores válidos.', true);
+            return;
+        }
+
+        const idPrestamo = generarIdPrestamo();
+        const fechaPrestamo = new Date(fechaPrestamoStr);
+        
+        const prestamoData = {
+            idCliente: idCliente,
+            idPrestamo: idPrestamo,
+            fechaPrestamo: fechaPrestamo,
+            capitalInicial: capitalInicial,
+            pagoDiarioRequerido: pagoDiarioReq,
+            saldoPendiente: capitalInicial, // Al inicio, es igual al capital
+            diasAtrasoAcumulado: 0,
+            interesAcumulado: 0.00,
+            estado: 'Activo',
+            fechaUltimoPago: fechaPrestamo,
+            // Agrega cualquier otro campo que tu lógica necesite (ej: Tasa, Plazo)
+        };
+        
+        const clienteData = {
+            nombre: nombreCliente,
+            cedula: idCliente,
+            fechaRegistro: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        try {
+            // 1. Guardar/Actualizar Cliente
+            await clientesRef.doc(idCliente).set(clienteData, { merge: true }); // Usamos merge para no sobrescribir si ya existe
+            
+            // 2. Guardar Préstamo
+            await prestamosRef.doc(idPrestamo).set(prestamoData);
+            
+            mostrarResultado(`Préstamo registrado con éxito. ID Préstamo: ${idPrestamo}`);
+            // Limpiar campos
+            document.getElementById('capitalInicial').value = '';
+            document.getElementById('pagoDiarioReq').value = '';
+        } catch (e) {
+            console.error("Error al registrar préstamo:", e);
+            mostrarResultado("Fallo al registrar el préstamo: " + e.message, true);
+        }
+    }
+</script>
+
+</body>
+</html>
