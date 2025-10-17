@@ -37,7 +37,7 @@
         
         let app, db, auth;
         
-        // --- Configuración de Firebase del Usuario (Hardcodeada para garantizar conexión) ---
+        // --- CONFIGURACIÓN DE FIREBASE DEL USUARIO (Hardcodeada para garantizar conexión) ---
         const USER_FIREBASE_CONFIG = {
             apiKey: "AIzaSyCuGggEvH6leC6-tWBpN-5BXC37U-NsFqU",
             authDomain: "finanzas-excel30.firebaseapp.com",
@@ -63,6 +63,8 @@
         if (db && auth) {
             window.db = db;
             window.auth = auth;
+            // La variable appId es necesaria para construir la ruta de Firestore
+            window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
             window.COLLECTION_PRESTAMOS = 'prestamos';
             window.COLLECTION_PAGOS = 'pagos';
             window.serverTimestamp = serverTimestamp;
@@ -83,14 +85,20 @@
                 return;
             }
             try {
-                // Usamos la variable global proporcionada por el entorno para el token
+                // Si el token personalizado está disponible, úselo (método preferido)
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
+                    console.log("Firebase Auth iniciado con token personalizado.");
                 } else {
-                    await signInAnonymously(auth);
+                    // Si el token personalizado no está disponible, se intenta la autenticación anónima
+                    await signInAnonymously(auth); 
+                    console.log("Firebase Auth iniciado de forma anónima.");
                 }
-                console.log("Firebase Auth inicializado con éxito.");
             } catch (error) {
+                // Este error indica que la Autenticación Anónima está deshabilitada en la consola de Firebase.
+                if (error.code === 'auth/admin-restricted-operation') {
+                    console.error("ERROR DE AUTENTICACIÓN: La Autenticación Anónima (Anonymous) está deshabilitada en su Consola de Firebase. Por favor, habilítela.");
+                }
                 console.error("Error en la autenticación:", error);
             }
         }
@@ -153,8 +161,7 @@
     </div>
 
 <script>
-    // Se asegura de que la variable __app_id esté disponible globalmente
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    // La variable appId ahora se inicializa dentro del bloque type="module"
     let prestamoActual = null;
     let prestamoDocRef = null;
 
@@ -199,7 +206,7 @@
     async function buscarPrestamo() {
         // Validación de conexión
         if (typeof window.db === 'undefined' || window.db === null) {
-            mostrarMensaje('¡ERROR DE CONEXIÓN! La base de datos no está inicializada. Recargue o revise su configuración.', 'error');
+            mostrarMensaje('¡ERROR DE CONEXIÓN! La base de datos no está inicializada. Revise la consola para detalles de configuración.', 'error');
             return;
         }
         
@@ -211,7 +218,7 @@
 
         try {
             // Ruta: /artifacts/{appId}/public/data/prestamos/{id}
-            prestamoDocRef = window.doc(window.db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PRESTAMOS, id);
+            prestamoDocRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', window.COLLECTION_PRESTAMOS, id);
             
             const prestamoDoc = await window.getDoc(prestamoDocRef);
 
@@ -241,7 +248,6 @@
                 prestamoDocRef = null;
             }
         } catch (error) {
-            // Si el error persiste, lo reportamos de forma detallada
             console.error("Error al buscar préstamo:", error);
             mostrarMensaje(`Error al cargar: ${error.message || 'Verifique la conexión y el ID.'}`, 'error');
         }
@@ -354,7 +360,7 @@
                 transaction.update(prestamoDocRef, data);
                 
                 // --- REGISTRAR PAGO (colección 'pagos') ---
-                const pagosCollectionRef = window.collection(window.db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PAGOS);
+                const pagosCollectionRef = window.collection(window.db, 'artifacts', window.appId, 'public', 'data', window.COLLECTION_PAGOS);
                 
                 // Agregamos el documento de pago fuera de la transacción (V9 no permite addDoc dentro)
                 await window.addDoc(pagosCollectionRef, {
