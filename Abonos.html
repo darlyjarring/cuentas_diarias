@@ -35,32 +35,50 @@
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, updateDoc, collection, query, where, addDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
         
-        // --- Configuración e Inicialización de Firebase ---
-        // Se usan las variables globales proporcionadas por el entorno (__firebase_config, __initial_auth_token)
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
+        let app, db, auth;
         
-        // --- EXPOSICIÓN DE GLOBALES ---
-        // Exportamos las referencias y funciones de V9 al ámbito global (window)
-        // para que puedan ser usadas por el script principal (no-module)
-        window.db = db;
-        window.auth = auth;
-        window.COLLECTION_PRESTAMOS = 'prestamos';
-        window.COLLECTION_PAGOS = 'pagos';
-        window.serverTimestamp = serverTimestamp;
-        window.runTransaction = runTransaction;
-        window.getDoc = getDoc;
-        window.doc = doc;
-        window.updateDoc = updateDoc;
-        window.collection = collection;
-        window.query = query;
-        window.where = where;
-        window.addDoc = addDoc;
+        // --- Configuración e Inicialización de Firebase con Manejo de Errores ---
+        let firebaseConfig = {};
+        try {
+            // 1. Intentar parsear la configuración global
+            firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+            
+            if (Object.keys(firebaseConfig).length === 0) {
+                 console.error("Firebase Initialization Error: __firebase_config is empty or not provided.");
+                 // NO inicializamos si está vacío, para evitar el error "projectId not provided"
+            } else {
+                // 2. Inicializar App y Servicios
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+            }
+        } catch (e) {
+            console.error("FATAL ERROR: Failed to parse Firebase config JSON.", e);
+        }
+
+        // --- EXPOSICIÓN DE GLOBALES (Solo si se inicializó correctamente) ---
+        if (db && auth) {
+            window.db = db;
+            window.auth = auth;
+            window.COLLECTION_PRESTAMOS = 'prestamos';
+            window.COLLECTION_PAGOS = 'pagos';
+            window.serverTimestamp = serverTimestamp;
+            window.runTransaction = runTransaction;
+            window.getDoc = getDoc;
+            window.doc = doc;
+            window.updateDoc = updateDoc;
+            window.collection = collection;
+            window.query = query;
+            window.where = where;
+            window.addDoc = addDoc;
+        }
 
         // Iniciar autenticación
         async function initializeAuth() {
+            if (!auth) {
+                console.warn("Auth no inicializado. La configuración de Firebase está ausente.");
+                return;
+            }
             try {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
@@ -175,8 +193,9 @@
     // --- Lógica de Búsqueda ---
 
     async function buscarPrestamo() {
+        // Validación de conexión
         if (typeof window.db === 'undefined' || window.db === null) {
-            mostrarMensaje('La base de datos no está inicializada. Espere un momento o recargue.', 'error');
+            mostrarMensaje('¡ERROR DE CONEXIÓN! La base de datos no está inicializada. Recargue el canvas.', 'error');
             return;
         }
         
@@ -187,7 +206,6 @@
         }
 
         try {
-            // Referencia al documento usando la función doc expuesta globalmente
             // Ruta: /artifacts/{appId}/public/data/prestamos/{id}
             prestamoDocRef = window.doc(window.db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PRESTAMOS, id);
             
@@ -197,7 +215,6 @@
                 prestamoActual = prestamoDoc.data();
                 if (prestamoActual.estado === 'Saldado') {
                     mostrarMensaje('Este préstamo ya está Saldado.', 'error');
-                    // Mostrar info de todas formas
                 }
                 
                 // Mostrar información en la UI
@@ -220,7 +237,6 @@
                 prestamoDocRef = null;
             }
         } catch (error) {
-            // Muestra el mensaje de error de Firebase si está disponible
             console.error("Error al buscar préstamo:", error);
             mostrarMensaje(`Error crítico al cargar: ${error.message || 'Verifique la conexión y el ID.'}`, 'error');
         }
@@ -294,10 +310,10 @@
                     // 3. Recalcular la Cuota Diaria
                     if (diasPlazo > 0) {
                         // Nuevo Pago Diario = (Nuevo Capital Pendiente * (1 + Tasa Total)) / Días Plazo Original
+                        // Asumimos que la amortización restante se distribuye en el plazo original
                         const nuevoMontoTotal = saldoPendienteActual * (1 + tasaTotal);
                         nuevoPagoDiarioRequerido = nuevoMontoTotal / diasPlazo;
                     } else {
-                        // Si no hay plazo definido, la cuota se mantiene o se debe definir un nuevo factor
                         nuevoPagoDiarioRequerido = saldoPendienteActual > 0 ? nuevoPagoDiarioRequerido : 0;
                     }
                     
@@ -335,10 +351,6 @@
                 // --- REGISTRAR PAGO (colección 'pagos') ---
                 const pagosCollectionRef = window.collection(window.db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PAGOS);
                 
-                // Nota: Usamos addDoc fuera de la transacción si la transacción solo garantiza la actualización,
-                // pero si el entorno lo permite, la forma más segura es usar la referencia de la colección
-                // con transaction.set(newDocRef, data) si es una transacción. 
-                // Dado que ADD no está permitido en transacciones V9, usaremos ADDDOC inmediatamente después (debe ser seguro)
                 await window.addDoc(pagosCollectionRef, {
                     idPrestamo: prestamoDoc.id,
                     idCliente: data.idCliente,
