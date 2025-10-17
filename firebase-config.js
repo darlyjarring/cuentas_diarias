@@ -2,14 +2,13 @@
 // ESTE CÓDIGO DEBE INCLUIRSE EN TU HTML DESPUÉS DE LOS SCRIPTS CDN DE FIREBASE.
 
 const firebaseConfig = {
-  apiKey: "AIzaSyArPPyaX0NoU2Gkax8bpj5MkWTLMsyZmYQ",
-  authDomain: "estado-de-equipos-rtgs.firebaseapp.com",
-  databaseURL: "https://estado-de-equipos-rtgs-default-rtdb.firebaseio.com", 
-  projectId: "estado-de-equipos-rtgs",
-  storageBucket: "estado-de-equipos-rtgs.firebasestorage.app",
-  messagingSenderId: "927929035915",
-  appId: "1:927929035915:web:be6b10e57043ea4aac788e",
-  measurementId: "G-YLVN1M7B87"
+    apiKey: "AIzaSyCuGggEvH6leC6-tWBpN-5BXC37U-NsFqU",
+    authDomain: "finanzas-excel30.firebaseapp.com",
+    projectId: "finanzas-excel30",
+    storageBucket: "finanzas-excel30.firebasestorage.app",
+    messagingSenderId: "508931220293",
+    appId: "1:508931220293:web:d64cf5125c37d5bae3142c",
+    measurementId: "G-2YZ3YREX0P"
 };
 
 // Inicializar Firebase
