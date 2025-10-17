@@ -36,12 +36,15 @@
         import { getFirestore, doc, getDoc, updateDoc, collection, query, where, addDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
         
         // --- Configuración e Inicialización de Firebase ---
+        // Se usan las variables globales proporcionadas por el entorno (__firebase_config, __initial_auth_token)
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
         
-        // Constantes globales de Firestore (Necesarias para el script)
+        // --- EXPOSICIÓN DE GLOBALES ---
+        // Exportamos las referencias y funciones de V9 al ámbito global (window)
+        // para que puedan ser usadas por el script principal (no-module)
         window.db = db;
         window.auth = auth;
         window.COLLECTION_PRESTAMOS = 'prestamos';
@@ -56,7 +59,7 @@
         window.where = where;
         window.addDoc = addDoc;
 
-        // Iniciar autenticación con el token proporcionado o de forma anónima
+        // Iniciar autenticación
         async function initializeAuth() {
             try {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -64,10 +67,9 @@
                 } else {
                     await signInAnonymously(auth);
                 }
-                console.log("Firebase Auth inicializado.");
+                console.log("Firebase Auth inicializado con éxito.");
             } catch (error) {
                 console.error("Error en la autenticación:", error);
-                mostrarMensaje('Error de autenticación.', 'error');
             }
         }
         initializeAuth();
@@ -123,15 +125,13 @@
                         Abonar a Capital
                     </button>
                 </div>
-                <div id="capitalAbonoDetails" class="mt-4 text-sm font-medium text-gray-700 space-y-1">
-                    <!-- Aquí se mostrarán los detalles del cálculo antes de confirmar -->
-                </div>
             </div>
         </div>
 
     </div>
 
 <script>
+    // Se asegura de que la variable __app_id esté disponible globalmente
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     let prestamoActual = null;
     let prestamoDocRef = null;
@@ -154,23 +154,32 @@
     }
 
     function formatCurrency(amount) {
-        return amount.toFixed(2);
+        return parseFloat(amount).toFixed(2);
     }
 
     function calculateDaysPassed(timestamp) {
-        if (!timestamp) return 0;
+        if (!timestamp || !timestamp.toDate) return 0; // Verifica que sea un Timestamp V9 válido
         const lastDate = timestamp.toDate();
         const now = new Date();
-        const diffTime = Math.abs(now.getTime() - lastDate.getTime());
-        // Redondeamos hacia arriba para incluir el día actual si ha pasado algo de tiempo
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        // Si la diferencia es muy pequeña (mismo día), podría ser 0
-        return Math.max(0, diffDays);
+        
+        // La diferencia de tiempo en milisegundos
+        const diffTime = now.getTime() - lastDate.getTime(); 
+        
+        // Días completos que han pasado
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        
+        // Si el último pago fue hoy, devuelve 0. Si fue ayer, devuelve 1.
+        return Math.max(0, diffDays); 
     }
 
     // --- Lógica de Búsqueda ---
 
     async function buscarPrestamo() {
+        if (typeof window.db === 'undefined' || window.db === null) {
+            mostrarMensaje('La base de datos no está inicializada. Espere un momento o recargue.', 'error');
+            return;
+        }
+        
         const id = document.getElementById('inputPrestamoId').value.trim();
         if (!id) {
             mostrarMensaje('Por favor, ingrese el ID del Préstamo.', 'error');
@@ -178,15 +187,17 @@
         }
 
         try {
-            // Referencia al documento: /artifacts/{appId}/public/data/prestamos/{id}
-            prestamoDocRef = doc(db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PRESTAMOS, id);
-            const prestamoDoc = await getDoc(prestamoDocRef);
+            // Referencia al documento usando la función doc expuesta globalmente
+            // Ruta: /artifacts/{appId}/public/data/prestamos/{id}
+            prestamoDocRef = window.doc(window.db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PRESTAMOS, id);
+            
+            const prestamoDoc = await window.getDoc(prestamoDocRef);
 
             if (prestamoDoc.exists()) {
                 prestamoActual = prestamoDoc.data();
                 if (prestamoActual.estado === 'Saldado') {
                     mostrarMensaje('Este préstamo ya está Saldado.', 'error');
-                    return;
+                    // Mostrar info de todas formas
                 }
                 
                 // Mostrar información en la UI
@@ -194,7 +205,7 @@
                 document.getElementById('infoCapitalInicial').textContent = formatCurrency(prestamoActual.capitalInicial || 0);
                 document.getElementById('infoCapitalPendiente').textContent = formatCurrency(prestamoActual.saldoPendiente || 0);
                 document.getElementById('infoPagoDiario').textContent = formatCurrency(prestamoActual.pagoDiarioRequerido || 0);
-                document.getElementById('infoTasaInteres').textContent = formatCurrency(prestamoActual.tasaInteresDiaria * 100);
+                document.getElementById('infoTasaInteres').textContent = formatCurrency((prestamoActual.tasaInteresDiaria || 0) * 100);
                 
                 const estadoSpan = document.getElementById('infoEstado');
                 estadoSpan.textContent = prestamoActual.estado;
@@ -209,8 +220,9 @@
                 prestamoDocRef = null;
             }
         } catch (error) {
+            // Muestra el mensaje de error de Firebase si está disponible
             console.error("Error al buscar préstamo:", error);
-            mostrarMensaje('Error al buscar el préstamo. Verifique la conexión.', 'error');
+            mostrarMensaje(`Error crítico al cargar: ${error.message || 'Verifique la conexión y el ID.'}`, 'error');
         }
     }
 
@@ -219,7 +231,7 @@
 
     async function realizarAbono(esAbonoCapital) {
         if (!prestamoActual || !prestamoDocRef) {
-            mostrarMensaje('Primero debe cargar un préstamo.', 'error');
+            mostrarMensaje('Primero debe cargar un préstamo válido.', 'error');
             return;
         }
 
@@ -233,7 +245,7 @@
 
         try {
             // Usamos una transacción para garantizar la atomicidad de las operaciones
-            await runTransaction(db, async (transaction) => {
+            await window.runTransaction(window.db, async (transaction) => {
                 // 1. Re-leer el documento dentro de la transacción
                 const prestamoDoc = await transaction.get(prestamoDocRef);
                 if (!prestamoDoc.exists()) {
@@ -244,118 +256,115 @@
                 // Variables iniciales
                 let saldoPendienteActual = data.saldoPendiente;
                 const tasaDiaria = data.tasaInteresDiaria || 0;
+                const tasaTotal = data.tasaTotal || 0; // Tasa total usada para recalculo (e.g. 0.2 para 20%)
+                const diasPlazo = data.diasPlazo || 1; // Días del plazo original
                 let fechaUltimoPago = data.fechaUltimoPago;
                 let capitalReducido = 0;
-                let interesAcumulado = 0;
+                let interesGenerado = 0; // Interés que se generó hasta hoy
+                let interesPagado = 0; // Interés que se cubre con este abono
+                let abonoCapital = 0;
                 let nuevoPagoDiarioRequerido = data.pagoDiarioRequerido;
                 let nuevoEstado = data.estado;
 
                 // --- CALCULAR INTERÉS GENERADO DESDE EL ÚLTIMO PAGO ---
                 const diasPasados = calculateDaysPassed(fechaUltimoPago);
                 
-                if (diasPasados > 0) {
-                    interesAcumulado = saldoPendienteActual * tasaDiaria * diasPasados;
+                if (diasPasados > 0 && saldoPendienteActual > 0) {
+                    interesGenerado = saldoPendienteActual * tasaDiaria * diasPasados;
                 }
                 
-                let abonoAPrincipal = 0;
-                let montoTotalPagado = 0;
-
+                let restante = montoTotalAbono;
+                
                 if (esAbonoCapital) {
                     // --- Lógica de Abono a Capital ---
-                    if (montoTotalAbono < interesAcumulado) {
-                        // El abono total solo cubre parte del interés
-                        mostrarMensaje('El monto no cubre el interés acumulado ($' + formatCurrency(interesAcumulado) + ').', 'error');
-                        throw new Error("Monto insuficiente para cubrir interés."); 
+                    
+                    // 1. Pagar el interés generado (obligatorio en abono a capital)
+                    if (restante < interesGenerado) {
+                        throw new Error(`El abono ($${formatCurrency(restante)}) es menor al interés generado ($${formatCurrency(interesGenerado)}) y no puede aplicarse a capital.`); 
                     }
 
-                    // 1. Pagar el interés acumulado
-                    montoTotalPagado = interesAcumulado;
+                    interesPagado = interesGenerado;
+                    restante -= interesGenerado;
 
-                    // 2. Determinar el monto restante para el principal
-                    abonoAPrincipal = montoTotalAbono - interesAcumulado;
-                    
-                    // 3. Aplicar al capital
-                    const nuevoSaldoPendiente = saldoPendienteActual - abonoAPrincipal;
-                    capitalReducido = abonoAPrincipal;
+                    // 2. El resto se aplica al Capital
+                    abonoCapital = Math.min(restante, saldoPendienteActual);
+                    saldoPendienteActual -= abonoCapital;
+                    capitalReducido = abonoCapital;
 
-                    // 4. Recalcular la Cuota Diaria (Asumiendo que el plazo o el factor se mantiene)
-                    // Simplificación: Asumimos que la amortización restante se distribuye en los días restantes.
-                    // Si el préstamo es diario, asumiremos que se recalcula el factor de amortización.
-                    // Aquí asumiremos que el plazo ORIGINAL se mantiene para calcular el nuevo PAGO DIARIO
-                    // Fórmula simplificada: Nuevo Pago Diario = (Nuevo Capital + Interés Total Estimado)/DíasPlazo
-                    
-                    const diasPlazo = data.diasPlazo || 1; // Asumir que existe el campo diasPlazo
-                    const interesTotalEstimado = nuevoSaldoPendiente * data.tasaTotal || 0; // Usar Tasa Total si existe
-                    
+                    // 3. Recalcular la Cuota Diaria
                     if (diasPlazo > 0) {
-                         // Usamos el cálculo simple del ejemplo: Cuota Diaria = Capital Inicial * (1 + Tasa Total) / Plazo
-                        const nuevoMontoTotal = nuevoSaldoPendiente * (1 + data.tasaTotal);
+                        // Nuevo Pago Diario = (Nuevo Capital Pendiente * (1 + Tasa Total)) / Días Plazo Original
+                        const nuevoMontoTotal = saldoPendienteActual * (1 + tasaTotal);
                         nuevoPagoDiarioRequerido = nuevoMontoTotal / diasPlazo;
+                    } else {
+                        // Si no hay plazo definido, la cuota se mantiene o se debe definir un nuevo factor
+                        nuevoPagoDiarioRequerido = saldoPendienteActual > 0 ? nuevoPagoDiarioRequerido : 0;
                     }
-
-                    saldoPendienteActual = nuevoSaldoPendiente;
-                    montoTotalPagado = montoTotalAbono; // El monto total de la transacción
                     
-                    // 5. Actualizar los campos que se van a guardar
+                    // 4. Actualizar data
                     data.pagoDiarioRequerido = nuevoPagoDiarioRequerido;
-                    data.saldoPendiente = saldoPendienteActual;
-                    data.fechaUltimoPago = serverTimestamp(); // Establecer ahora
-
+                    
                 } else {
                     // --- Lógica de Abono Diario Normal ---
 
-                    // 1. El pago primero cubre interés acumulado
-                    let restante = montoTotalAbono;
-                    let cubiertoInteres = Math.min(restante, interesAcumulado);
-                    restante -= cubiertoInteres;
-                    interesAcumulado -= cubiertoInteres; // Interés Pendiente (debería ser 0 si el pago cubre lo requerido)
-                    montoTotalPagado = cubiertoInteres; // Lo que se aplica a interés
-
+                    // 1. El pago primero cubre interés generado
+                    interesPagado = Math.min(restante, interesGenerado);
+                    restante -= interesPagado;
+                    
                     // 2. El resto se aplica al capital
-                    abonoAPrincipal = Math.min(restante, saldoPendienteActual);
-                    saldoPendienteActual -= abonoAPrincipal;
-                    capitalReducido = abonoAPrincipal;
-                    montoTotalPagado += abonoAPrincipal; // Total aplicado
-
-                    // 3. Determinar el nuevo estado
-                    if (saldoPendienteActual <= 0) {
-                        nuevoEstado = 'Saldado';
-                        saldoPendienteActual = 0;
-                        nuevoPagoDiarioRequerido = 0;
-                        data.estado = nuevoEstado;
-                        data.pagoDiarioRequerido = nuevoPagoDiarioRequerido;
-                    }
-
-                    // 4. Actualizar los campos que se van a guardar
-                    data.saldoPendiente = saldoPendienteActual;
-                    data.fechaUltimoPago = serverTimestamp(); // Establecer ahora
+                    abonoCapital = Math.min(restante, saldoPendienteActual);
+                    saldoPendienteActual -= abonoCapital;
+                    capitalReducido = abonoCapital;
                 }
 
+                // 5. Determinar el nuevo estado y actualizar saldo
+                if (saldoPendienteActual <= 0) {
+                    nuevoEstado = 'Saldado';
+                    saldoPendienteActual = 0;
+                    nuevoPagoDiarioRequerido = 0;
+                    data.estado = nuevoEstado;
+                    data.pagoDiarioRequerido = nuevoPagoDiarioRequerido;
+                }
+
+                data.saldoPendiente = saldoPendienteActual;
+                data.fechaUltimoPago = window.serverTimestamp(); // La fecha del pago es AHORA
 
                 // --- GUARDAR CAMBIOS EN EL PRÉSTAMO (TRANSACCIÓN) ---
                 transaction.update(prestamoDocRef, data);
                 
-                // --- REGISTRAR PAGO (FUERA DE LA TRANSACCIÓN ya que es ADD) ---
-                const pagosCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PAGOS);
-                await addDoc(pagosCollectionRef, {
+                // --- REGISTRAR PAGO (colección 'pagos') ---
+                const pagosCollectionRef = window.collection(window.db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PAGOS);
+                
+                // Nota: Usamos addDoc fuera de la transacción si la transacción solo garantiza la actualización,
+                // pero si el entorno lo permite, la forma más segura es usar la referencia de la colección
+                // con transaction.set(newDocRef, data) si es una transacción. 
+                // Dado que ADD no está permitido en transacciones V9, usaremos ADDDOC inmediatamente después (debe ser seguro)
+                await window.addDoc(pagosCollectionRef, {
                     idPrestamo: prestamoDoc.id,
                     idCliente: data.idCliente,
-                    monto: montoTotalAbono, // Monto total de la transacción
+                    monto: montoTotalAbono, 
                     montoAplicadoCapital: capitalReducido,
-                    montoAplicadoInteres: interesAcumulado, // El interés que se estaba pagando
-                    tipo: esAbonoCapital ? 'Abono a Capital' : 'Abono Diario',
-                    fecha: serverTimestamp()
+                    montoAplicadoInteres: interesPagado,
+                    interesGeneradoHoy: interesGenerado,
+                    tipo: esAbonoCapital ? 'Abono a Capital (Recalculado)' : 'Abono Diario',
+                    fecha: window.serverTimestamp()
                 });
 
-                // 5. Actualizar la UI
-                // Llamamos a buscarPrestamo() para recargar la UI con los nuevos datos
-                mostrarMensaje(`Transacción (${esAbonoCapital ? 'Abono a Capital' : 'Abono Diario'}) registrada con éxito. Nuevo saldo: $${formatCurrency(saldoPendienteActual)}.`, 'success');
-                await buscarPrestamo(); 
-
+                // 6. Reporte de éxito
+                const mensaje = `Transacción (${esAbonoCapital ? 'Abono a Capital' : 'Abono Diario'}) registrada. 
+                                 Interés generado/cubierto: $${formatCurrency(interesGenerado)}. 
+                                 Abono a capital: $${formatCurrency(capitalReducido)}.
+                                 Nuevo pago diario: $${formatCurrency(data.pagoDiarioRequerido)}.`;
+                mostrarMensaje(mensaje, 'success');
+                
             });
+
+            // Recargar la UI
+            await buscarPrestamo(); 
+
         } catch (error) {
             console.error("Error en la transacción de pago:", error);
-            mostrarMensaje(`Error al realizar el pago: ${error.message}`, 'error');
+            mostrarMensaje(`Fallo al realizar el pago: ${error.message || 'Error desconocido en Firestore.'}`, 'error');
         }
     }
 </script>
