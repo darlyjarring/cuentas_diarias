@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Registro de Pagos y Abono a Capital</title>
+    <!-- Cargamos Tailwind CSS para un diseño limpio -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #eef2f5; }
+        .card { background-color: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 25px; }
+        .input-group { display: flex; gap: 10px; }
+        input[type="text"], input[type="number"] { border: 1px solid #ccc; padding: 10px; border-radius: 8px; transition: border-color 0.3s; }
+        input[type="text"]:focus, input[type="number"]:focus { border-color: #3b82f6; outline: none; }
+        button { cursor: pointer; transition: background-color 0.3s, transform 0.1s; border-radius: 8px; padding: 10px 15px; }
+        button:active { transform: scale(0.98); }
+        .btn-primary { background-color: #3b82f6; color: white; }
+        .btn-primary:hover { background-color: #2563eb; }
+        .btn-success { background-color: #10b981; color: white; }
+        .btn-success:hover { background-color: #059669; }
+        .status-Activo { color: #f97316; font-weight: bold; }
+        .status-Saldado { color: #10b981; font-weight: bold; }
+        /* Estilos para el modal/message box (sustituto de alert/confirm) */
+        .message-box { 
+            position: fixed; top: 20px; right: 20px; z-index: 50; 
+            padding: 15px 25px; border-radius: 8px; font-weight: 600; 
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); 
+            display: none; 
+            transition: opacity 0.3s ease-in-out;
+        }
+        .message-box.success { background-color: #d1fae5; color: #065f46; }
+        .message-box.error { background-color: #fee2e2; color: #991b1b; }
+    </style>
+    <!-- Importaciones de Firebase V9 (Módulos) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, updateDoc, collection, query, where, addDoc, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+        
+        // --- Configuración e Inicialización de Firebase ---
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        
+        // Constantes globales de Firestore (Necesarias para el script)
+        window.db = db;
+        window.auth = auth;
+        window.COLLECTION_PRESTAMOS = 'prestamos';
+        window.COLLECTION_PAGOS = 'pagos';
+        window.serverTimestamp = serverTimestamp;
+        window.runTransaction = runTransaction;
+        window.getDoc = getDoc;
+        window.doc = doc;
+        window.updateDoc = updateDoc;
+        window.collection = collection;
+        window.query = query;
+        window.where = where;
+        window.addDoc = addDoc;
+
+        // Iniciar autenticación con el token proporcionado o de forma anónima
+        async function initializeAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                console.log("Firebase Auth inicializado.");
+            } catch (error) {
+                console.error("Error en la autenticación:", error);
+                mostrarMensaje('Error de autenticación.', 'error');
+            }
+        }
+        initializeAuth();
+    </script>
+</head>
+<body class="p-8">
+
+    <div id="messageBox" class="message-box" style="display: none;"></div>
+
+    <div class="max-w-4xl mx-auto space-y-8">
+        <h2 class="text-3xl font-extrabold text-gray-800 border-b-4 border-blue-500 pb-2">
+            Gestión de Pagos y Abonos a Capital
+        </h2>
+
+        <!-- Sección de Búsqueda de Préstamo -->
+        <div class="card p-6">
+            <h3 class="text-xl font-semibold mb-4 text-blue-600">1. Buscar Préstamo por ID</h3>
+            <div class="input-group">
+                <input type="text" id="inputPrestamoId" class="w-full" placeholder="Ingrese ID del Préstamo (ej: aB1cD2eF3g)" />
+                <button onclick="buscarPrestamo()" class="btn-primary flex-shrink-0">Cargar Préstamo</button>
+            </div>
+        </div>
+
+        <!-- Resultados y Operaciones -->
+        <div id="prestamoInfo" class="card p-6" style="display: none;">
+            <h3 class="text-xl font-semibold mb-4 text-gray-700">2. Detalles del Préstamo</h3>
+            
+            <div class="space-y-2 text-sm text-gray-600 mb-6 border-b pb-4">
+                <p><strong>ID Cliente:</strong> <span id="infoIdCliente" class="font-medium"></span></p>
+                <p><strong>Capital Inicial:</strong> $<span id="infoCapitalInicial" class="font-medium"></span></p>
+                <p><strong>Capital Pendiente:</strong> $<span id="infoCapitalPendiente" class="font-medium text-red-600"></span></p>
+                <p><strong>Pago Diario Requerido:</strong> $<span id="infoPagoDiario" class="font-medium text-blue-600"></span></p>
+                <p><strong>Tasa Interés Diaria:</strong> <span id="infoTasaInteres" class="font-medium"></span>%</p>
+                <p><strong>Estado:</strong> <span id="infoEstado"></span></p>
+            </div>
+
+            <!-- Sección de Abono Normal (Diario) -->
+            <div class="border border-gray-200 p-4 rounded-lg mb-6">
+                <h4 class="text-lg font-semibold mb-3 text-gray-700">Abono Diario o Parcial</h4>
+                <div class="input-group">
+                    <input type="number" id="montoPagoDiario" class="w-full" placeholder="Monto del Abono (ej: 15.00)" min="0" step="0.01" />
+                    <button onclick="realizarAbono(false)" class="btn-primary flex-shrink-0">Registrar Abono Diario</button>
+                </div>
+            </div>
+
+            <!-- Sección de Abono a Capital (Nuevo) -->
+            <div class="border border-green-500 bg-green-50 p-4 rounded-lg">
+                <h4 class="text-lg font-bold mb-3 text-green-700">Abono Directo a Capital Inicial</h4>
+                <p class="text-sm text-green-800 mb-3">Este abono reduce directamente el capital pendiente y recalcula la nueva cuota diaria, tras pagar el interés acumulado.</p>
+                <div class="input-group">
+                    <input type="number" id="montoAbonoCapital" class="w-full" placeholder="Monto Total a Abonar (ej: 50.00)" min="0" step="0.01" />
+                    <button onclick="realizarAbono(true)" class="btn-success flex-shrink-0">
+                        Abonar a Capital
+                    </button>
+                </div>
+                <div id="capitalAbonoDetails" class="mt-4 text-sm font-medium text-gray-700 space-y-1">
+                    <!-- Aquí se mostrarán los detalles del cálculo antes de confirmar -->
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+<script>
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    let prestamoActual = null;
+    let prestamoDocRef = null;
+
+    // --- Utilidades ---
+
+    function mostrarMensaje(mensaje, tipo) {
+        const messageBox = document.getElementById('messageBox');
+        messageBox.textContent = mensaje;
+        messageBox.className = `message-box ${tipo}`;
+        messageBox.style.display = 'block';
+        messageBox.style.opacity = 1;
+
+        setTimeout(() => {
+            messageBox.style.opacity = 0;
+            setTimeout(() => {
+                messageBox.style.display = 'none';
+            }, 300);
+        }, 5000);
+    }
+
+    function formatCurrency(amount) {
+        return amount.toFixed(2);
+    }
+
+    function calculateDaysPassed(timestamp) {
+        if (!timestamp) return 0;
+        const lastDate = timestamp.toDate();
+        const now = new Date();
+        const diffTime = Math.abs(now.getTime() - lastDate.getTime());
+        // Redondeamos hacia arriba para incluir el día actual si ha pasado algo de tiempo
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        // Si la diferencia es muy pequeña (mismo día), podría ser 0
+        return Math.max(0, diffDays);
+    }
+
+    // --- Lógica de Búsqueda ---
+
+    async function buscarPrestamo() {
+        const id = document.getElementById('inputPrestamoId').value.trim();
+        if (!id) {
+            mostrarMensaje('Por favor, ingrese el ID del Préstamo.', 'error');
+            return;
+        }
+
+        try {
+            // Referencia al documento: /artifacts/{appId}/public/data/prestamos/{id}
+            prestamoDocRef = doc(db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PRESTAMOS, id);
+            const prestamoDoc = await getDoc(prestamoDocRef);
+
+            if (prestamoDoc.exists()) {
+                prestamoActual = prestamoDoc.data();
+                if (prestamoActual.estado === 'Saldado') {
+                    mostrarMensaje('Este préstamo ya está Saldado.', 'error');
+                    return;
+                }
+                
+                // Mostrar información en la UI
+                document.getElementById('infoIdCliente').textContent = prestamoActual.idCliente || 'N/A';
+                document.getElementById('infoCapitalInicial').textContent = formatCurrency(prestamoActual.capitalInicial || 0);
+                document.getElementById('infoCapitalPendiente').textContent = formatCurrency(prestamoActual.saldoPendiente || 0);
+                document.getElementById('infoPagoDiario').textContent = formatCurrency(prestamoActual.pagoDiarioRequerido || 0);
+                document.getElementById('infoTasaInteres').textContent = formatCurrency(prestamoActual.tasaInteresDiaria * 100);
+                
+                const estadoSpan = document.getElementById('infoEstado');
+                estadoSpan.textContent = prestamoActual.estado;
+                estadoSpan.className = `status-${prestamoActual.estado}`;
+                
+                document.getElementById('prestamoInfo').style.display = 'block';
+                mostrarMensaje('Préstamo cargado con éxito.', 'success');
+            } else {
+                mostrarMensaje(`Préstamo con ID ${id} no encontrado.`, 'error');
+                document.getElementById('prestamoInfo').style.display = 'none';
+                prestamoActual = null;
+                prestamoDocRef = null;
+            }
+        } catch (error) {
+            console.error("Error al buscar préstamo:", error);
+            mostrarMensaje('Error al buscar el préstamo. Verifique la conexión.', 'error');
+        }
+    }
+
+
+    // --- Lógica de Abono Normal y Abono a Capital ---
+
+    async function realizarAbono(esAbonoCapital) {
+        if (!prestamoActual || !prestamoDocRef) {
+            mostrarMensaje('Primero debe cargar un préstamo.', 'error');
+            return;
+        }
+
+        const inputId = esAbonoCapital ? 'montoAbonoCapital' : 'montoPagoDiario';
+        const montoTotalAbono = parseFloat(document.getElementById(inputId).value);
+
+        if (isNaN(montoTotalAbono) || montoTotalAbono <= 0) {
+            mostrarMensaje('Ingrese un monto válido mayor a cero.', 'error');
+            return;
+        }
+
+        try {
+            // Usamos una transacción para garantizar la atomicidad de las operaciones
+            await runTransaction(db, async (transaction) => {
+                // 1. Re-leer el documento dentro de la transacción
+                const prestamoDoc = await transaction.get(prestamoDocRef);
+                if (!prestamoDoc.exists()) {
+                    throw new Error("El préstamo fue eliminado o no existe.");
+                }
+                let data = prestamoDoc.data();
+                
+                // Variables iniciales
+                let saldoPendienteActual = data.saldoPendiente;
+                const tasaDiaria = data.tasaInteresDiaria || 0;
+                let fechaUltimoPago = data.fechaUltimoPago;
+                let capitalReducido = 0;
+                let interesAcumulado = 0;
+                let nuevoPagoDiarioRequerido = data.pagoDiarioRequerido;
+                let nuevoEstado = data.estado;
+
+                // --- CALCULAR INTERÉS GENERADO DESDE EL ÚLTIMO PAGO ---
+                const diasPasados = calculateDaysPassed(fechaUltimoPago);
+                
+                if (diasPasados > 0) {
+                    interesAcumulado = saldoPendienteActual * tasaDiaria * diasPasados;
+                }
+                
+                let abonoAPrincipal = 0;
+                let montoTotalPagado = 0;
+
+                if (esAbonoCapital) {
+                    // --- Lógica de Abono a Capital ---
+                    if (montoTotalAbono < interesAcumulado) {
+                        // El abono total solo cubre parte del interés
+                        mostrarMensaje('El monto no cubre el interés acumulado ($' + formatCurrency(interesAcumulado) + ').', 'error');
+                        throw new Error("Monto insuficiente para cubrir interés."); 
+                    }
+
+                    // 1. Pagar el interés acumulado
+                    montoTotalPagado = interesAcumulado;
+
+                    // 2. Determinar el monto restante para el principal
+                    abonoAPrincipal = montoTotalAbono - interesAcumulado;
+                    
+                    // 3. Aplicar al capital
+                    const nuevoSaldoPendiente = saldoPendienteActual - abonoAPrincipal;
+                    capitalReducido = abonoAPrincipal;
+
+                    // 4. Recalcular la Cuota Diaria (Asumiendo que el plazo o el factor se mantiene)
+                    // Simplificación: Asumimos que la amortización restante se distribuye en los días restantes.
+                    // Si el préstamo es diario, asumiremos que se recalcula el factor de amortización.
+                    // Aquí asumiremos que el plazo ORIGINAL se mantiene para calcular el nuevo PAGO DIARIO
+                    // Fórmula simplificada: Nuevo Pago Diario = (Nuevo Capital + Interés Total Estimado)/DíasPlazo
+                    
+                    const diasPlazo = data.diasPlazo || 1; // Asumir que existe el campo diasPlazo
+                    const interesTotalEstimado = nuevoSaldoPendiente * data.tasaTotal || 0; // Usar Tasa Total si existe
+                    
+                    if (diasPlazo > 0) {
+                         // Usamos el cálculo simple del ejemplo: Cuota Diaria = Capital Inicial * (1 + Tasa Total) / Plazo
+                        const nuevoMontoTotal = nuevoSaldoPendiente * (1 + data.tasaTotal);
+                        nuevoPagoDiarioRequerido = nuevoMontoTotal / diasPlazo;
+                    }
+
+                    saldoPendienteActual = nuevoSaldoPendiente;
+                    montoTotalPagado = montoTotalAbono; // El monto total de la transacción
+                    
+                    // 5. Actualizar los campos que se van a guardar
+                    data.pagoDiarioRequerido = nuevoPagoDiarioRequerido;
+                    data.saldoPendiente = saldoPendienteActual;
+                    data.fechaUltimoPago = serverTimestamp(); // Establecer ahora
+
+                } else {
+                    // --- Lógica de Abono Diario Normal ---
+
+                    // 1. El pago primero cubre interés acumulado
+                    let restante = montoTotalAbono;
+                    let cubiertoInteres = Math.min(restante, interesAcumulado);
+                    restante -= cubiertoInteres;
+                    interesAcumulado -= cubiertoInteres; // Interés Pendiente (debería ser 0 si el pago cubre lo requerido)
+                    montoTotalPagado = cubiertoInteres; // Lo que se aplica a interés
+
+                    // 2. El resto se aplica al capital
+                    abonoAPrincipal = Math.min(restante, saldoPendienteActual);
+                    saldoPendienteActual -= abonoAPrincipal;
+                    capitalReducido = abonoAPrincipal;
+                    montoTotalPagado += abonoAPrincipal; // Total aplicado
+
+                    // 3. Determinar el nuevo estado
+                    if (saldoPendienteActual <= 0) {
+                        nuevoEstado = 'Saldado';
+                        saldoPendienteActual = 0;
+                        nuevoPagoDiarioRequerido = 0;
+                        data.estado = nuevoEstado;
+                        data.pagoDiarioRequerido = nuevoPagoDiarioRequerido;
+                    }
+
+                    // 4. Actualizar los campos que se van a guardar
+                    data.saldoPendiente = saldoPendienteActual;
+                    data.fechaUltimoPago = serverTimestamp(); // Establecer ahora
+                }
+
+
+                // --- GUARDAR CAMBIOS EN EL PRÉSTAMO (TRANSACCIÓN) ---
+                transaction.update(prestamoDocRef, data);
+                
+                // --- REGISTRAR PAGO (FUERA DE LA TRANSACCIÓN ya que es ADD) ---
+                const pagosCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', window.COLLECTION_PAGOS);
+                await addDoc(pagosCollectionRef, {
+                    idPrestamo: prestamoDoc.id,
+                    idCliente: data.idCliente,
+                    monto: montoTotalAbono, // Monto total de la transacción
+                    montoAplicadoCapital: capitalReducido,
+                    montoAplicadoInteres: interesAcumulado, // El interés que se estaba pagando
+                    tipo: esAbonoCapital ? 'Abono a Capital' : 'Abono Diario',
+                    fecha: serverTimestamp()
+                });
+
+                // 5. Actualizar la UI
+                // Llamamos a buscarPrestamo() para recargar la UI con los nuevos datos
+                mostrarMensaje(`Transacción (${esAbonoCapital ? 'Abono a Capital' : 'Abono Diario'}) registrada con éxito. Nuevo saldo: $${formatCurrency(saldoPendienteActual)}.`, 'success');
+                await buscarPrestamo(); 
+
+            });
+        } catch (error) {
+            console.error("Error en la transacción de pago:", error);
+            mostrarMensaje(`Error al realizar el pago: ${error.message}`, 'error');
+        }
+    }
+</script>
+
+</body>
+</html>
