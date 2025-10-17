@@ -47,9 +47,62 @@
         .pago-item { padding: 3px 0; border-bottom: 1px dotted #ccc; font-size: 0.85em; }
         .pago-item:last-child { border-bottom: none; }
         .pago-item strong { margin-right: 10px; color: #555; }
+
+        /* Estilos del Modal (Ventana Emergente) */
+        .modal {
+            display: none; /* Oculto por defecto */
+            position: fixed; 
+            z-index: 10; 
+            left: 0;
+            top: 0;
+            width: 100%; 
+            height: 100%; 
+            overflow: auto; 
+            background-color: rgba(0,0,0,0.4); /* Fondo semi-transparente */
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            padding: 30px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        .close-btn {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            position: absolute;
+            top: 10px;
+            right: 15px;
+        }
+        .close-btn:hover,
+        .close-btn:focus {
+            color: #333;
+            text-decoration: none;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
+
+<!-- Modal de Edición de Cliente -->
+<div id="modalEdicionCliente" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="cerrarModalEdicion()">&times;</span>
+        <h3>Editar Datos del Cliente</h3>
+        <input type="hidden" id="cedulaOriginal">
+        <label for="editNombre">Nombre Completo:</label>
+        <input type="text" id="editNombre" required>
+        <label for="editCedula">Nueva Cédula/ID:</label>
+        <input type="text" id="editCedula" required>
+        <button onclick="guardarCambiosCliente()" class="btn-green">Guardar Cambios</button>
+    </div>
+</div>
 
 <div class="container">
     <h2>Central de Gestión de Clientes y Reportes</h2>
@@ -59,18 +112,11 @@
     <div class="input-group">
         <input type="text" id="inputClienteId" placeholder="Ingrese ID (Cédula) del Cliente" />
         <button onclick="cargarClienteParaEdicion()">Buscar Cliente y Generar Reporte</button>
+        <button id="btnEditarCliente" onclick="abrirModalEdicion()" class="btn-green" style="display:none;">
+            Editar Cliente
+        </button>
     </div>
     
-    <div id="formEdicionCliente" style="display:none; border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-        <h3 style="margin-top: 0;">Editar Datos del Cliente</h3>
-        <input type="hidden" id="cedulaOriginal">
-        <label for="editNombre">Nombre Completo:</label>
-        <input type="text" id="editNombre" required>
-        <label for="editCedula">Nueva Cédula/ID:</label>
-        <input type="text" id="editCedula" required>
-        <button onclick="guardarCambiosCliente()" class="btn-green">Guardar Cambios</button>
-    </div>
-
     <!-- Sección de Reportes -->
     <div class="section-header">2. Reportes Financieros Detallados</div>
     <div id="reportesCliente" style="display:none;">
@@ -108,21 +154,36 @@
         }, 6000);
     }
 
-    // Función de utilidad para formatear fechas de Timestamp
-    function formatDate(timestamp) {
+    // Función de utilidad para formatear fechas de Timestamp (ahora incluye la hora)
+    function formatDateTime(timestamp) {
         if (!timestamp) return 'N/A';
         // Los timestamps de Firebase v8 son objetos con 'seconds'
         const date = new Date(timestamp.seconds * 1000); 
         return date.toLocaleDateString('es-ES', { 
             year: 'numeric', 
             month: '2-digit', 
-            day: '2-digit' 
+            day: '2-digit',
+            hour: '2-digit', // Añade la hora
+            minute: '2-digit' // Añade el minuto
         });
     }
 
     // =======================================================
-    // 1. LÓGICA DE EDICIÓN DE CLIENTES
+    // 1. LÓGICA DE EDICIÓN DE CLIENTES (CON MODAL)
     // =======================================================
+
+    function abrirModalEdicion() {
+        if (!clienteSeleccionado) {
+            mostrarResultado('Primero debe buscar y cargar un cliente.', true);
+            return;
+        }
+        document.getElementById('modalEdicionCliente').style.display = 'flex';
+    }
+
+    function cerrarModalEdicion() {
+        document.getElementById('modalEdicionCliente').style.display = 'none';
+    }
+
 
     async function cargarClienteParaEdicion() {
         const idCliente = document.getElementById('inputClienteId').value.trim();
@@ -135,10 +196,15 @@
             const clienteDoc = await clientesRef.doc(idCliente).get();
             if (clienteDoc.exists) {
                 clienteSeleccionado = clienteDoc.data();
+                
+                // Cargar datos en los campos del modal
                 document.getElementById('editNombre').value = clienteSeleccionado.nombre;
                 document.getElementById('editCedula').value = clienteDoc.id;
                 document.getElementById('cedulaOriginal').value = clienteDoc.id; // Guarda el ID original
-                document.getElementById('formEdicionCliente').style.display = 'block';
+
+                // Mostrar botón de edición
+                document.getElementById('btnEditarCliente').style.display = 'inline-block';
+
                 mostrarResultado(`Cliente "${clienteSeleccionado.nombre}" cargado.`, false);
                 
                 // Cargar reportes del cliente
@@ -146,7 +212,7 @@
 
             } else {
                 mostrarResultado('Cliente no encontrado.', true);
-                document.getElementById('formEdicionCliente').style.display = 'none';
+                document.getElementById('btnEditarCliente').style.display = 'none';
                 document.getElementById('reportesCliente').style.display = 'none';
                 clienteSeleccionado = null;
             }
@@ -187,10 +253,8 @@
 
                     // c) Actualizar todos los préstamos asociados al ID viejo
                     const prestamosQuery = prestamosRef.where('idCliente', '==', cedulaOriginal);
-                    const prestamosSnapshot = await prestamosQuery.get(); // Usar get() sin transaction
+                    const prestamosSnapshot = await prestamosQuery.get(); 
                     
-                    // Nota: Firestore v8 requiere que las queries sin `orderBy` se ejecuten con get() fuera de la transacción
-                    // y luego se usen las referencias para actualizar dentro de la transacción.
                     for (const doc of prestamosSnapshot.docs) {
                         transaction.update(doc.ref, { idCliente: cedulaNueva });
                     }
@@ -200,11 +264,12 @@
                 });
                 
                 mostrarResultado('Cliente y sus préstamos actualizados a la nueva Cédula/ID.', false);
-                document.getElementById('cedulaOriginal').value = cedulaNueva; // Actualiza el campo original
-                document.getElementById('inputClienteId').value = cedulaNueva; // Actualiza el campo de búsqueda
-                cargarReportes(cedulaNueva); // Recarga los reportes con el nuevo ID
+                document.getElementById('cedulaOriginal').value = cedulaNueva; 
+                document.getElementById('inputClienteId').value = cedulaNueva; 
+                cargarReportes(cedulaNueva); 
 
             }
+            cerrarModalEdicion(); // Cierra el modal al guardar exitosamente
         } catch (e) {
             console.error("Error en la transacción/actualización:", e);
             mostrarResultado("Fallo al guardar cambios: " + e.message, true);
@@ -212,12 +277,10 @@
     }
 
     // =======================================================
-    // 2. LÓGICA DE REPORTES DETALLADOS
+    // 2. LÓGICA DE REPORTES DETALLADOS (CON HORA Y ENCABEZADOS)
     // =======================================================
 
     async function obtenerDetallePagos(idPrestamo) {
-        // Obtenemos los pagos y los ordenamos por fecha (aunque la lógica de Firestore es asincrónica,
-        // confiaremos en que el Timestamp 'fecha' en la colección 'pagos' nos dé un orden aproximado)
         const pagosQuery = pagosRef.where('idPrestamo', '==', idPrestamo);
         const pagosSnapshot = await pagosQuery.get();
         
@@ -234,18 +297,28 @@
             totalPagado += data.monto || 0;
         });
 
-        // Ordenar los pagos en memoria por fecha (ascendente) para el reporte
+        // Ordenar los pagos en memoria por fecha (ascendente)
         pagos.sort((a, b) => a.fecha.seconds - b.fecha.seconds);
         
-        // Generar el HTML de detalle
-        detallePagosHTML += '<div class="detalle-pagos">Detalle de Pagos:';
+        // Generar el HTML de detalle con encabezados (estructura de grid)
+        detallePagosHTML += '<div class="detalle-pagos">';
+        detallePagosHTML += '<h5 style="margin-top: 0; color: #34495e;">Detalle de Pagos:</h5>';
+        
         if (pagos.length === 0) {
             detallePagosHTML += '<p style="margin: 0; padding: 5px; font-style: italic;">No hay pagos registrados para este préstamo.</p>';
         } else {
+            // Fila de encabezados
+            detallePagosHTML += '<div style="display: grid; grid-template-columns: 2fr 1fr; font-weight: bold; border-bottom: 2px solid #ccc; padding-bottom: 5px; margin-bottom: 5px;">';
+            detallePagosHTML += '<span>Fecha y Hora de Registro</span>';
+            detallePagosHTML += '<span style="text-align: right;">Monto Abonado</span>';
+            detallePagosHTML += '</div>';
+
+            // Filas de pagos
             pagos.forEach(pago => {
                 detallePagosHTML += `
-                    <div class="pago-item">
-                        <strong>- ${formatDate(pago.fecha)}:</strong> $${pago.monto.toFixed(2)}
+                    <div class="pago-item" style="display: grid; grid-template-columns: 2fr 1fr;">
+                        <span>- ${formatDateTime(pago.fecha)}</span> 
+                        <span style="text-align: right; font-weight: bold;">$${pago.monto.toFixed(2)}</span>
                     </div>
                 `;
             });
@@ -294,7 +367,7 @@
                             <span class="status-badge status-${prestamo.estado}">${prestamo.estado.toUpperCase()}</span>
                         </h4>
                         <div class="loan-stats">
-                            <div class="stat-item"><strong>Fecha Préstamo:</strong> ${formatDate(prestamo.fechaPrestamo)}</div>
+                            <div class="stat-item"><strong>Fecha Préstamo:</strong> ${formatDateTime(prestamo.fechaPrestamo)}</div>
                             <div class="stat-item"><strong>Capital Inicial:</strong> $${(prestamo.capitalInicial || 0).toFixed(2)}</div>
                             <div class="stat-item" style="grid-column: 1 / span 2; font-size: 1.1em;">
                                 <strong>Total Pagado en este PRÉSTAMO:</strong> 
