@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Abonos - Préstamos</title>
+<style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#f4f7f8;padding:20px;}
+    .box{max-width:480px;margin:20px auto;background:#fff;padding:18px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.06);}
+    label{display:block;margin-top:10px;color:#333;font-weight:600}
+    input,select{width:100%;padding:8px;margin-top:6px;border-radius:6px;border:1px solid #ccc;box-sizing:border-box}
+    button{margin-top:14px;width:100%;padding:10px;border-radius:6px;border:none;background:#2c3e50;color:#fff;cursor:pointer}
+    button:disabled{background:#999;cursor:not-allowed}
+    #resultado{margin-top:12px;padding:8px;border-radius:6px}
+    .info{background:#e8f5e9;color:#155724}
+    .warn{background:#fff3cd;color:#856404}
+    .err{background:#f8d7da;color:#721c24}
+    #datosPrestamo{margin-top:10px;background:#eef6fb;padding:10px;border-radius:6px;display:none}
+    .progress-container{margin-top:10px;background:#ddd;border-radius:6px;overflow:hidden}
+    .progress-bar{height:16px;background:#28a745;width:0%;transition:width .4s ease-in-out}
+    #historialPagos{margin-top:15px}
+    .pago-item{background:#f0f0f0;padding:8px;margin:6px 0;border-radius:6px;display:flex;justify-content:space-between;align-items:center}
+    .pago-item button{width:auto;margin:0 2px;padding:4px 8px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="box">
+    <h2>Registro de Pago Diario</h2>
+
+    <label for="idPrestamo">ID del Préstamo</label>
+    <input id="idPrestamo" placeholder="Ej: PREST001" />
+
+    <div id="datosPrestamo"></div>
+
+    <label for="montoPagado">Monto Abonado</label>
+    <input id="montoPagado" type="number" step="0.01" />
+
+    <label for="tipoPago">Tipo de Pago</label>
+    <select id="tipoPago">
+        <option value="normal" selected>Pago normal (interés + capital)</option>
+        <option value="capital">Abono al capital</option>
+        <option value="interes">Pago solo de interés</option>
+    </select>
+
+    <button id="btnRegistrar">Registrar Pago</button>
+    <div id="resultado"></div>
+
+    <div id="historialPagos"></div>
+</div>
+
+<!-- Firebase v8 -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+<script>
+/* ============ CONFIGURA AQUÍ ============ */
+const firebaseConfig = {
+    apiKey: "AIzaSyCuGggEvH6leC6-tWBpN-5BXC37U-NsFqU",
+    authDomain: "finanzas-excel30.firebaseapp.com",
+    projectId: "finanzas-excel30",
+    storageBucket: "finanzas-excel30.firebasestorage.app",
+    messagingSenderId: "508931220293",
+    appId: "1:508931220293:web:d64cf5125c37d5bae3142c",
+    measurementId: "G-2YZ3YREX0P"
+};
+/* ======================================== */
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const prestamosRef = db.collection('prestamos');
+const pagosRef = db.collection('pagos');
+
+const resultadoDiv = document.getElementById('resultado');
+const datosPrestamoDiv = document.getElementById('datosPrestamo');
+const btnRegistrar = document.getElementById('btnRegistrar');
+const historialDiv = document.getElementById('historialPagos');
+
+document.getElementById('btnRegistrar').addEventListener('click', enviarPago);
+document.getElementById('idPrestamo').addEventListener('blur', buscarPrestamo);
+
+function mostrarInfo(text){resultadoDiv.textContent=text;resultadoDiv.className='info';}
+function mostrarAviso(text){resultadoDiv.textContent=text;resultadoDiv.className='warn';}
+function mostrarError(text){resultadoDiv.textContent=text;resultadoDiv.className='err';}
+
+// === Buscar préstamo ===
+async function buscarPrestamo(){
+    const id = (document.getElementById('idPrestamo').value||'').trim().toUpperCase();
+    datosPrestamoDiv.style.display='none';
+    historialDiv.innerHTML='';
+    if(!id) return;
+
+    mostrarAviso('Cargando préstamo...');
+    try {
+        const doc = await prestamosRef.doc(id).get();
+        if(!doc.exists){mostrarError('Préstamo no encontrado.');return;}
+        const data = doc.data();
+
+        const capitalInicial = data.capitalInicial || 0;
+        const saldoPendiente = data.saldoPendiente || 0;
+        const pagado = capitalInicial - saldoPendiente;
+        const porcentaje = capitalInicial>0 ? (pagado/capitalInicial*100).toFixed(1):0;
+
+        datosPrestamoDiv.innerHTML = `
+            <p><strong>Cliente:</strong> ${data.nombreCliente||'N/D'}</p>
+            <p><strong>Capital Inicial:</strong> $${capitalInicial.toFixed(2)}</p>
+            <p><strong>Saldo Pendiente:</strong> $${saldoPendiente.toFixed(2)}</p>
+            <p><strong>Interés Acumulado:</strong> $${(data.interesAcumulado||0).toFixed(2)}</p>
+            <p><strong>Estado:</strong> ${data.estado||'Activo'}</p>
+            <div class="progress-container">
+                <div class="progress-bar" style="width:${porcentaje}%;background:${data.estado==='Saldado'?'gray':'#28a745'}"></div>
+            </div>
+            <p><small>${porcentaje}% del capital pagado</small></p>
+        `;
+        datosPrestamoDiv.style.display='block';
+        btnRegistrar.disabled = data.estado === 'Saldado';
+        mostrarInfo('Préstamo cargado.');
+
+        // Mostrar historial de pagos
+        mostrarHistorial(id);
+    }catch(err){
+        console.error(err);
+        mostrarError('Error al obtener datos del préstamo.');
+    }
+}
+
+// === Mostrar historial de pagos ===
+async function mostrarHistorial(id){
+    historialDiv.innerHTML='<h3>Historial de Pagos</h3>';
+    const snapshot = await pagosRef.where('idPrestamo','==',id).orderBy('fecha','desc').get();
+    if(snapshot.empty){historialDiv.innerHTML+='<p>No hay pagos registrados.</p>';return;}
+    snapshot.forEach(doc=>{
+        const p=doc.data();
+        const fecha = p.fecha?.toDate?.().toLocaleDateString()||'Sin fecha';
+        const item=document.createElement('div');
+        item.className='pago-item';
+        item.innerHTML=`
+            <span>$${p.monto.toFixed(2)} - ${p.tipoPago} (${fecha})</span>
+            <div>
+                <button onclick="editarPago('${doc.id}', ${p.monto})">✏️</button>
+                <button onclick="eliminarPago('${doc.id}')">🗑️</button>
+            </div>
+        `;
+        historialDiv.appendChild(item);
+    });
+}
+
+// === Editar pago ===
+async function editarPago(idPago, montoActual){
+    const nuevoMonto = parseFloat(prompt(`Monto actual: ${montoActual}\nIngrese nuevo monto:`));
+    if(isNaN(nuevoMonto)||nuevoMonto<=0)return alert('Monto inválido.');
+    if(!confirm('¿Confirmas actualizar el monto del pago?'))return;
+    await pagosRef.doc(idPago).update({monto:nuevoMonto});
+    mostrarInfo('Pago actualizado correctamente.');
+    buscarPrestamo();
+}
+
+// === Eliminar pago ===
+async function eliminarPago(idPago){
+    if(!confirm('¿Deseas eliminar este pago?'))return;
+    await pagosRef.doc(idPago).delete();
+    mostrarInfo('Pago eliminado correctamente.');
+    buscarPrestamo();
+}
+
+// === Enviar pago ===
+async function enviarPago(){
+    const idPrestamo=(document.getElementById('idPrestamo').value||'').trim().toUpperCase();
+    const montoPagado=parseFloat(document.getElementById('montoPagado').value);
+    const tipoPago=document.getElementById('tipoPago').value;
+
+    if(!idPrestamo||isNaN(montoPagado)||montoPagado<=0){
+        mostrarError('Ingresa ID y un monto válido.');
+        return;
+    }
+    mostrarAviso('Procesando pago...');
+    try{
+        await db.runTransaction(async (transaction)=>{
+            const prestamoRefDoc=prestamosRef.doc(idPrestamo);
+            const prestamoSnap=await transaction.get(prestamoRefDoc);
+            if(!prestamoSnap.exists)throw new Error('Préstamo no existe.');
+            const data=prestamoSnap.data();
+            if(data.estado==='Saldado')throw new Error('Préstamo ya saldado.');
+
+            let saldo=data.saldoPendiente||0;
+            let interes=data.interesAcumulado||0;
+            let capital=data.capitalInicial||0;
+            let pagoCapital=0,pagoInteres=0;
+
+            if(tipoPago==='normal'){
+                pagoInteres=Math.min(montoPagado,interes);
+                pagoCapital=Math.min(montoPagado-pagoInteres,saldo);
+                saldo-=pagoCapital;
+                interes-=pagoInteres;
+            }else if(tipoPago==='capital'){
+                pagoCapital=Math.min(montoPagado,saldo);
+                saldo-=pagoCapital;
+                capital-=pagoCapital;
+            }else{
+                pagoInteres=Math.min(montoPagado,interes);
+                interes-=pagoInteres;
+            }
+
+            const estado=(saldo<=0&&interes<=0)?'Saldado':'Activo';
+            pagosRef.add({
+                idPrestamo,tipoPago,monto:montoPagado,
+                aplicadoCapital:pagoCapital,aplicadoInteres:pagoInteres,
+                fecha:firebase.firestore.FieldValue.serverTimestamp()
+            });
+            transaction.update(prestamoRefDoc,{
+                saldoPendiente:parseFloat(saldo.toFixed(2)),
+                interesAcumulado:parseFloat(interes.toFixed(2)),
+                capitalInicial:parseFloat(capital.toFixed(2)),
+                estado
+            });
+        });
+        mostrarInfo('Pago registrado correctamente.');
+        buscarPrestamo();
+    }catch(err){
+        mostrarError(err.message||'Error al procesar el pago.');
+    }
+}
+</script>
+</body>
+</html>
