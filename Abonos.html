@@ -55,6 +55,7 @@
             border-radius: 6px;
             display: none;
         }
+        #datosPrestamo p { margin: 5px 0; }
     </style>
 </head>
 <body>
@@ -62,12 +63,14 @@
     <h2>Registro de Pago Diario</h2>
 
     <label for="idPrestamo">ID del Préstamo:</label>
-    <input type="text" id="idPrestamo" placeholder="Ej: PREST001">
+    <input type="text" id="idPrestamo" placeholder="Ej: PREST001" onblur="buscarPrestamo()">
+
+    <div id="datosPrestamo"></div>
 
     <label for="montoPagado">Monto Abonado Hoy:</label>
     <input type="number" id="montoPagado" placeholder="Ej: 100">
 
-    <!-- 🔹 NUEVO CAMPO: Tipo de pago -->
+    <!-- 🔹 Tipo de pago -->
     <label for="tipoPago">Tipo de Pago:</label>
     <select id="tipoPago">
         <option value="normal" selected>Pago normal (interés + capital)</option>
@@ -77,11 +80,9 @@
 
     <button onclick="enviarPago()">Registrar Pago</button>
     <div id="resultado"></div>
-
-    <div id="datosPrestamo"></div>
 </div>
 
-<!-- 🔹 Scripts de Firebase -->
+<!-- Firebase -->
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
 
@@ -102,6 +103,41 @@
 
     let idPrestamoActual = null;
 
+    // 🔍 Buscar préstamo y mostrar datos
+    async function buscarPrestamo() {
+        const id = document.getElementById("idPrestamo").value.trim().toUpperCase();
+        const datosDiv = document.getElementById("datosPrestamo");
+        if (!id) {
+            datosDiv.style.display = "none";
+            return;
+        }
+
+        try {
+            const doc = await prestamosRef.doc(id).get();
+            if (!doc.exists) {
+                datosDiv.innerHTML = "<p style='color:red;'>❌ Préstamo no encontrado.</p>";
+                datosDiv.style.display = "block";
+                return;
+            }
+
+            const data = doc.data();
+            datosDiv.innerHTML = `
+                <p><strong>Cliente:</strong> ${data.nombreCliente || "No registrado"}</p>
+                <p><strong>Capital Inicial:</strong> $${data.capitalInicial?.toFixed(2) || 0}</p>
+                <p><strong>Saldo Pendiente:</strong> $${data.saldoPendiente?.toFixed(2) || 0}</p>
+                <p><strong>Interés Acumulado:</strong> $${data.interesAcumulado?.toFixed(2) || 0}</p>
+                <p><strong>Estado:</strong> ${data.estado || "Activo"}</p>
+            `;
+            datosDiv.style.display = "block";
+
+        } catch (err) {
+            console.error(err);
+            datosDiv.innerHTML = "<p style='color:red;'>⚠️ Error al buscar el préstamo.</p>";
+            datosDiv.style.display = "block";
+        }
+    }
+
+    // 🔁 Actualizar intereses pendientes
     async function actualizarIntereses(idPrestamo) {
         const doc = await prestamosRef.doc(idPrestamo).get();
         if (!doc.exists) return;
@@ -121,6 +157,7 @@
         }
     }
 
+    // 💰 Registrar pago
     async function enviarPago() {
         const idPrestamo = document.getElementById('idPrestamo').value.toUpperCase().trim();
         const montoPagado = parseFloat(document.getElementById('montoPagado').value);
@@ -136,13 +173,10 @@
         resultadoDiv.textContent = 'Procesando...';
         resultadoDiv.style.backgroundColor = '#fff3cd';
 
-        document.getElementById('datosPrestamo').style.display = 'none';
-
         try {
             await actualizarIntereses(idPrestamo);
 
             let nuevoSaldo = 0;
-            let nuevoCapital = 0;
             let pagoAlCapital = 0;
             let pagoAlInteres = 0;
 
@@ -151,18 +185,17 @@
                 const prestamoDoc = await transaction.get(prestamoDocRef);
 
                 if (!prestamoDoc.exists) throw new Error("Préstamo no encontrado.");
-
                 const data = prestamoDoc.data();
+
                 let saldoPendiente = data.saldoPendiente || 0;
                 let interesAcumulado = data.interesAcumulado || 0;
                 let capitalInicial = data.capitalInicial || 0;
 
                 if (data.estado === 'Saldado') throw new Error("Este préstamo ya fue saldado.");
 
-                // 🔹 Lógica según tipo de pago
                 if (tipoPago === 'normal') {
                     pagoAlInteres = Math.min(montoPagado, interesAcumulado);
-                    let restante = montoPagado - pagoAlInteres;
+                    const restante = montoPagado - pagoAlInteres;
                     pagoAlCapital = Math.min(restante, saldoPendiente);
                     nuevoSaldo = saldoPendiente - pagoAlCapital;
                     interesAcumulado -= pagoAlInteres;
@@ -171,12 +204,10 @@
                     nuevoSaldo = saldoPendiente - pagoAlCapital;
                     capitalInicial -= pagoAlCapital;
                     if (capitalInicial < 0) capitalInicial = 0;
-                    pagoAlInteres = 0;
                 } else if (tipoPago === 'interes') {
                     pagoAlInteres = Math.min(montoPagado, interesAcumulado);
                     interesAcumulado -= pagoAlInteres;
                     nuevoSaldo = saldoPendiente;
-                    pagoAlCapital = 0;
                 }
 
                 if (nuevoSaldo < 0.005) nuevoSaldo = 0;
@@ -199,18 +230,20 @@
                     interesAcumulado: parseFloat(interesAcumulado.toFixed(2)),
                     capitalInicial: parseFloat(capitalInicial.toFixed(2)),
                     estado: estado,
-                    fechaUltimoPago: firebase.firestore.FieldValue.serverTimestamp(),
+                    fechaUltimoPago: firebase.firestore.FieldValue.serverTimestamp()
                 });
             });
 
             const mensajeFinal = `Tipo: ${tipoPago.toUpperCase()} | Capital: $${pagoAlCapital.toFixed(2)} | Interés: $${pagoAlInteres.toFixed(2)} | Nuevo Saldo: $${nuevoSaldo.toFixed(2)}`;
             resultadoDiv.textContent = `✅ REGISTRO GENERADO. ${mensajeFinal} (ID: ${idPrestamoActual})`;
             resultadoDiv.style.backgroundColor = '#d9ead3';
+
+            buscarPrestamo(); // 🔹 Actualiza los datos mostrados
+
             setTimeout(() => {
                 resultadoDiv.textContent = '';
                 resultadoDiv.style.backgroundColor = 'transparent';
             }, 5000);
-
         } catch (e) {
             console.error("Fallo de transacción:", e);
             mostrarError(e.message || "Fallo crítico al procesar el pago.");
