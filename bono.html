@@ -7,6 +7,7 @@
     body{font-family:Arial,Helvetica,sans-serif;background:#f4f7f8;padding:20px;}
     .box{max-width:550px;margin:20px auto;background:#fff;padding:20px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.08);}
     h2{text-align:center;color:#8B0000;margin-bottom:20px; border-bottom: 2px solid #8B0000; padding-bottom: 10px;}
+    h3{color:#333; margin-top: 10px; margin-bottom: 10px;}
     label{display:block;margin-top:12px;color:#333;font-weight:600}
     input{width:100%;padding:10px;margin-top:6px;border-radius:6px;border:1px solid #ccc;box-sizing:border-box}
     button{margin-top:16px;width:100%;padding:12px;border-radius:6px;border:none;background:#8B0000;color:#fff;cursor:pointer;font-weight:bold;transition:background .3s}
@@ -14,27 +15,52 @@
     .warn{background:#fff3cd;color:#856404; margin-top: 15px; padding: 10px; border-radius: 6px; text-align: center;}
     .err{background:#f8d7da;color:#721c24; margin-top: 15px; padding: 10px; border-radius: 6px;}
     .info{background:#d1ecf1;color:#0c5460; margin-top: 15px; padding: 10px; border-radius: 6px;}
+    
+    .pago-item {
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        background: #f9f9f9;
+        transition: background 0.2s;
+    }
+    .pago-item:hover {
+        background: #e6e6e6;
+        border-color: #8B0000;
+    }
 </style>
 </head>
 <body>
 <div class="box">
     <h2>🛠️ Herramienta de Corrección de Pagos (Admin)</h2>
-    <p class="warn">
-        Advertencia: Esta herramienta es solo para modificar registros de pago (fecha/monto) para fines de prueba. 
-        Modificar un pago *no* recalcula automáticamente el saldo del préstamo asociado.
-    </p>
-
-    <label for="idPagoAdmin">ID del Pago a Corregir</label>
-    <input id="idPagoAdmin" placeholder="Ej: 1G2h3Jk4L5mN" />
     
-    <label for="montoAdmin">Nuevo Monto Pagado</label>
-    <input id="montoAdmin" type="number" step="0.01" />
+    <label for="idPrestamoAdmin">ID del Préstamo a Consultar</label>
+    <input id="idPrestamoAdmin" placeholder="Ej: PREST001" />
 
-    <label for="fechaAdmin">Nueva Fecha de Pago</label>
-    <input id="fechaAdmin" type="date" />
+    <button onclick="buscarPagos()">Buscar Pagos del Préstamo</button>
 
-    <button id="btnCorregirPago" onclick="corregirPago()">Corregir Pago Seleccionado</button>
     <div id="resultadoAdmin" class="resultado"></div>
+    
+    <div id="listaPagosDiv" style="margin-top: 20px;">
+        <!-- Pagos listados aquí -->
+    </div>
+    
+    <div id="formularioCorreccion" style="border-top: 1px solid #ddd; padding-top: 20px; margin-top: 20px; display: none;">
+        <h3>Datos del Pago Seleccionado</h3>
+        <p class="warn">
+            Advertencia: El cambio solo se aplica al registro de pago. No recalcula el saldo del préstamo.
+        </p>
+        <p>ID de Pago Seleccionado: <strong id="pagoSeleccionadoID">--</strong></p>
+        
+        <label for="montoAdmin">Nuevo Monto Pagado</label>
+        <input id="montoAdmin" type="number" step="0.01" />
+
+        <label for="fechaAdmin">Nueva Fecha de Pago</label>
+        <input id="fechaAdmin" type="date" />
+
+        <button id="btnCorregirPago" onclick="corregirPago()">Guardar Corrección</button>
+    </div>
 </div>
 
 <!-- Firebase v8 CDN -->
@@ -61,20 +87,113 @@ const db = firebase.firestore();
 const pagosRef = db.collection('pagos');
 
 const resultadoAdminDiv = document.getElementById('resultadoAdmin');
+const listaPagosDiv = document.getElementById('listaPagosDiv');
+const formularioCorreccionDiv = document.getElementById('formularioCorreccion');
+const pagoSeleccionadoIDStrong = document.getElementById('pagoSeleccionadoID');
+
+let idPagoSeleccionado = null; // Variable global para el ID de pago seleccionado
 
 // Funciones de utilidad para el panel de administración
 function mostrarAdminInfo(text){resultadoAdminDiv.textContent=text;resultadoAdminDiv.className='info';}
 function mostrarAdminError(text){resultadoAdminDiv.textContent=text;resultadoAdminDiv.className='err';}
 
+// Función auxiliar para formatear la fecha para la visualización
+function formatDate(timestamp) {
+    if (timestamp && typeof timestamp.toDate === 'function') {
+        return timestamp.toDate().toLocaleDateString('es-ES', { 
+            year: 'numeric', month: '2-digit', day: '2-digit', 
+            hour: '2-digit', minute: '2-digit' 
+        });
+    }
+    return 'Fecha N/A';
+}
+
+// Función auxiliar para obtener la fecha en formato YYYY-MM-DD para el input[type="date"]
+function dateToInput(timestamp) {
+    if (timestamp && typeof timestamp.toDate === 'function') {
+        const date = timestamp.toDate();
+        return date.toISOString().split('T')[0];
+    }
+    return '';
+}
+
+// === LÓGICA DE BÚSQUEDA DE PAGOS POR PRÉSTAMO ===
+async function buscarPagos() {
+    const idPrestamo = (document.getElementById('idPrestamoAdmin').value || '').trim().toUpperCase();
+    
+    // Limpiar estado
+    listaPagosDiv.innerHTML = '';
+    resultadoAdminDiv.textContent = '';
+    formularioCorreccionDiv.style.display = 'none';
+    idPagoSeleccionado = null;
+
+    if (!idPrestamo) {
+        mostrarAdminError('Debe ingresar el ID del Préstamo.');
+        return;
+    }
+
+    mostrarAdminInfo(`Buscando pagos para Préstamo ${idPrestamo}...`);
+
+    try {
+        // Consultar la colección 'pagos' donde idPrestamo coincida
+        // Ordenar por fecha descendente para ver los más recientes primero
+        const q = pagosRef.where('idPrestamo', '==', idPrestamo).orderBy('fecha', 'desc');
+        const snapshot = await q.get();
+
+        if (snapshot.empty) {
+            listaPagosDiv.innerHTML = '<p class="warn">No se encontraron pagos para este préstamo.</p>';
+            mostrarAdminInfo('Búsqueda completada.');
+            return;
+        }
+
+        let html = '<h3>Pagos Encontrados (Clic para seleccionar):</h3>';
+        
+        snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            const monto = data.monto || 0;
+            const fechaDisplay = formatDate(data.fecha);
+            const fechaInput = dateToInput(data.fecha);
+
+            html += `
+                <div class="pago-item" 
+                     onclick="seleccionarPago('${doc.id}', ${monto}, '${fechaInput}')">
+                    <strong>ID Pago: ${doc.id}</strong><br>
+                    Monto Pagado: $${monto.toFixed(2)} | Fecha: ${fechaDisplay}
+                </div>
+            `;
+        });
+        
+        listaPagosDiv.innerHTML = html;
+        mostrarAdminInfo(`Se encontraron ${snapshot.docs.length} pagos. Seleccione uno para corregir.`);
+
+    } catch (error) {
+        console.error("Error al buscar pagos:", error);
+        mostrarAdminError(`Error al buscar pagos: ${error.message}`);
+    }
+}
+
+// === LÓGICA DE SELECCIÓN DE PAGO ===
+function seleccionarPago(id, monto, fechaInput) {
+    idPagoSeleccionado = id;
+    
+    // Rellenar el formulario de corrección con los datos actuales
+    pagoSeleccionadoIDStrong.textContent = id;
+    document.getElementById('montoAdmin').value = monto;
+    document.getElementById('fechaAdmin').value = fechaInput;
+    
+    formularioCorreccionDiv.style.display = 'block';
+    mostrarAdminInfo(`Pago ${id} seleccionado. Modifique los campos y presione 'Guardar Corrección'.`);
+}
+
 
 // === LÓGICA DE ADMINISTRACIÓN PARA CORREGIR PAGOS ===
 async function corregirPago() {
-    const idPago = (document.getElementById('idPagoAdmin').value || '').trim();
+    const idPago = idPagoSeleccionado; // Usar el ID guardado al seleccionar
     const nuevoMonto = parseFloat(document.getElementById('montoAdmin').value);
     const nuevaFecha = document.getElementById('fechaAdmin').value;
 
     if (!idPago) {
-        mostrarAdminError('Debe ingresar el ID del Pago a corregir.');
+        mostrarAdminError('Primero debe buscar y seleccionar un pago de la lista.');
         return;
     }
 
@@ -112,11 +231,15 @@ async function corregirPago() {
         
         mostrarAdminInfo(`✅ ${mensaje}`);
         
-        // Limpiar formulario y advertir
-        document.getElementById('idPagoAdmin').value = '';
+        // Limpiar el estado de selección y el formulario
+        idPagoSeleccionado = null;
+        pagoSeleccionadoIDStrong.textContent = '--';
         document.getElementById('montoAdmin').value = '';
         document.getElementById('fechaAdmin').value = '';
-        
+        formularioCorreccionDiv.style.display = 'none';
+        listaPagosDiv.innerHTML = ''; // Limpiar la lista para forzar una nueva búsqueda si se necesita.
+        document.getElementById('idPrestamoAdmin').value = '';
+
         // Mensaje de advertencia final
         setTimeout(() => {
             mostrarAdminInfo('¡Éxito! Recuerde que este cambio *no* actualizó el saldo del Préstamo.');
